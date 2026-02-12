@@ -14,6 +14,10 @@ const parseRegion = (region: string) => {
 export default function LocusPage({ params }: { params: { region: string } }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const trackUrl =
+    process.env.NEXT_PUBLIC_GENE_TRACK_URL && process.env.NEXT_PUBLIC_GENE_TRACK_URL.trim().length > 0
+      ? process.env.NEXT_PUBLIC_GENE_TRACK_URL
+      : '/genes.sample.bed';
 
   useEffect(() => {
     let browser: any;
@@ -31,7 +35,7 @@ export default function LocusPage({ params }: { params: { region: string } }) {
               name: 'Genes (sample)',
               type: 'annotation',
               format: 'bed',
-              url: '/genes.sample.bed', // local static file to avoid S3 CORS/forbidden
+              url: trackUrl,
             },
           ],
         });
@@ -45,7 +49,7 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         browser.dispose();
       }
     };
-  }, [params.region]);
+  }, [params.region, trackUrl]);
 
   return (
     <main className="min-h-screen p-6 space-y-4">
