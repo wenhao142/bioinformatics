@@ -19,8 +19,10 @@ export default function LocusPage({ params }: { params: { region: string } }) {
     let browser: any;
     const load = async () => {
       try {
-        const igv = await import('igv');
-        const { chr, start, end } = parseRegion(params.region);
+        const mod = await import('igv');
+        const igv = (mod as any).default ?? mod; // igv exports UMD default
+        const decoded = decodeURIComponent(params.region);
+        const { chr, start, end } = parseRegion(decoded);
         browser = await igv.createBrowser(containerRef.current as HTMLDivElement, {
           genome: 'hg38',
           locus: `${chr}:${start}-${end}`,
