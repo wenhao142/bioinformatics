@@ -18,6 +18,7 @@ class Variant(TypedDict):
     alt: str
     qual: Optional[float]
     filter: str
+    gene: Optional[str]
 
 
 class PgVariantStore:
@@ -147,9 +148,35 @@ def parse_vcf_bytes(data: bytes) -> List[Variant]:
                     "alt": a,
                     "qual": qual_val,
                     "filter": filt,
+                    "gene": None,
                 }
             )
     return rows
+
+
+# Minimal built-in gene intervals for MVP nearest-gene mapping
+GeneInterval = TypedDict("GeneInterval", {"chr": str, "start": int, "end": int, "gene": str})
+GENE_INTERVALS: List[GeneInterval] = [
+    {"chr": "chr1", "start": 1, "end": 500, "gene": "GENE1"},
+    {"chr": "chr1", "start": 600, "end": 900, "gene": "GENE2"},
+    {"chr": "chr2", "start": 100, "end": 300, "gene": "GENE3"},
+]
+
+
+def nearest_gene(chr: str, pos: int) -> Optional[str]:
+    candidates = [g for g in GENE_INTERVALS if g["chr"] == chr]
+    if not candidates:
+        return None
+    best_gene = None
+    best_dist = 10**9
+    for g in candidates:
+        if g["start"] <= pos <= g["end"]:
+            return g["gene"]
+        dist = min(abs(pos - g["start"]), abs(pos - g["end"]))
+        if dist < best_dist:
+            best_dist = dist
+            best_gene = g["gene"]
+    return best_gene
 
 
 @router.post("/ingest")
@@ -167,11 +194,25 @@ def list_variants(
     chr: str = Query(..., description="chromosome, e.g., chr1"),
     start: int = Query(1),
     end: int = Query(250_000_000),
+    annotate: bool = Query(False, description="attach nearest gene"),
     user=Depends(current_user),
 ):
-    return {"variants": STORE.query(chr, start, end)}
+    variants = STORE.query(chr, start, end)
+    if annotate:
+        for v in variants:
+            v["gene"] = nearest_gene(v["chr"], v["pos"])
+    return {"variants": variants}
 
 
 @router.get("/stats")
 def variant_stats(user=Depends(current_user)):
     return STORE.stats()
+
+
+@router.get("/nearest")
+def nearest(
+    chr: str = Query(..., description="chromosome, e.g., chr1"),
+    pos: int = Query(...),
+    user=Depends(current_user),
+):
+    return {"gene": nearest_gene(chr, pos)}

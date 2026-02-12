@@ -1,0 +1,6 @@
+gene	logfc	pval	adj_pval
+A1BG	1.2	0.001	0.01
+APOE	-0.8	0.02	0.05
+MAPT	0.5	0.10	0.20
+CLU	1.5	0.0005	0.004
+BIN1	-1.1	0.005	0.03
