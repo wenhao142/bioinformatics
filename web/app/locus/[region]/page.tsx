@@ -28,11 +28,10 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           locus: `${chr}:${start}-${end}`,
           tracks: [
             {
-              name: 'Genes',
+              name: 'Genes (sample)',
               type: 'annotation',
               format: 'bed',
-              url: 'https://s3.amazonaws.com/igv.org.genomes/hg38/genes/gencode.v44.annotation.bed.gz',
-              indexURL: 'https://s3.amazonaws.com/igv.org.genomes/hg38/genes/gencode.v44.annotation.bed.gz.tbi',
+              url: '/genes.sample.bed', // local static file to avoid S3 CORS/forbidden
             },
           ],
         });
