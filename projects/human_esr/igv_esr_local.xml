@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<Session genome="hg38" hasGeneTrack="true" hasSequenceTrack="true" version="9">
+    <Resources>
+        <Resource path="bam/NA12878.ESR1.bam" index="bam/NA12878.ESR1.bam.bai"/>
+        <Resource path="bam/NA12878.ESR2.bam" index="bam/NA12878.ESR2.bam.bai"/>
+        <Resource path="results/vcf/NA12878.ESR1.vcf.gz" index="results/vcf/NA12878.ESR1.vcf.gz.tbi"/>
+        <Resource path="results/vcf/NA12878.ESR2.vcf.gz" index="results/vcf/NA12878.ESR2.vcf.gz.tbi"/>
+    </Resources>
+    <Panel height="800" name="DataPanel">
+        <Track id="bam/NA12878.ESR1.bam" name="NA12878 ESR1 BAM" visible="true" color="0,0,150"/>
+        <Track id="bam/NA12878.ESR2.bam" name="NA12878 ESR2 BAM" visible="true" color="0,120,0"/>
+        <Track id="results/vcf/NA12878.ESR1.vcf.gz" name="NA12878 ESR1 VCF" visible="true" color="200,0,0"/>
+        <Track id="results/vcf/NA12878.ESR2.vcf.gz" name="NA12878 ESR2 VCF" visible="true" color="200,0,200"/>
+    </Panel>
+</Session>

@@ -1,0 +1,85 @@
+#!/usr/bin/env python
+"""
+Snakemake pipeline for GSE148405 proxy analysis:
+- DE (5xFAD vs WT microglia)
+- Hallmark estrogen prerank GSEA
+- GO BP enrichment (up/down)
+- KEGG enrichment (up)
+"""
+
+import os
+
+# Paths
+COUNTS = "data/GSE148405_counts.csv.gz"
+SERIES = "data/GSE148405_series_matrix.txt.gz"
+PREFIX = "results/gse148405_proxy"
+ENV_ACT = "source /Users/yuewenhao/miniforge3/bin/activate /Users/yuewenhao/miniforge3/envs/ad-finemap"
+
+rule all:
+    input:
+        f"{PREFIX}/DE_5xFAD_vs_WT.tsv",
+        f"{PREFIX}/up_genes.txt",
+        f"{PREFIX}/down_genes.txt",
+        f"{PREFIX}/gsea_estrogen/estrogen_only.tsv",
+        f"{PREFIX}/go_bp/up_go_bp_sig.tsv",
+        f"{PREFIX}/go_bp/down_go_bp_sig.tsv",
+        f"{PREFIX}/kegg/kegg_enrichr_sig.tsv",
+
+
+rule de_proxy:
+    input:
+        counts=COUNTS,
+        series=SERIES,
+    output:
+        de=f"{PREFIX}/DE_5xFAD_vs_WT.tsv",
+        up=f"{PREFIX}/up_genes.txt",
+        down=f"{PREFIX}/down_genes.txt",
+        volcano=f"{PREFIX}/volcano.png",
+    shell:
+        f"""{ENV_ACT} && python scripts/run_gse148405_proxy.py \
+            --counts {{input.counts}} --series {{input.series}} --outdir {PREFIX}"""
+
+
+rule gsea_estrogen:
+    input:
+        de=f"{PREFIX}/DE_5xFAD_vs_WT.tsv",
+    output:
+        subset=f"{PREFIX}/gsea_estrogen/estrogen_only.tsv",
+    params:
+        outdir=f"{PREFIX}/gsea_estrogen",
+    shell:
+        f"""{ENV_ACT} && python scripts/run_estrogen_prerank.py \
+            --de {{input.de}} --outdir {{params.outdir}}"""
+
+
+rule go_bp:
+    input:
+        up=f"{PREFIX}/up_genes.txt",
+        down=f"{PREFIX}/down_genes.txt",
+    output:
+        up_sig=f"{PREFIX}/go_bp/up_go_bp_sig.tsv",
+        down_sig=f"{PREFIX}/go_bp/down_go_bp_sig.tsv",
+    params:
+        outdir=f"{PREFIX}/go_bp",
+        fdr="0.1",
+        topn="15",
+    shell:
+        f"""{ENV_ACT} && python scripts/run_go_enrich.py \
+            --up {{input.up}} --down {{input.down}} --outdir {{params.outdir}} \
+            --fdr {{params.fdr}} --topn {{params.topn}}"""
+
+
+rule kegg:
+    input:
+        genes=f"{PREFIX}/up_genes.txt",
+    output:
+        sig=f"{PREFIX}/kegg/kegg_enrichr_sig.tsv",
+    params:
+        outdir=f"{PREFIX}/kegg",
+        fdr="0.1",
+        topn="15",
+        lib="KEGG_2019_Mouse",
+    shell:
+        f"""{ENV_ACT} && python scripts/run_kegg_enrich.py \
+            --genes {{input.genes}} --outdir {{params.outdir}} \
+            --library {{params.lib}} --fdr {{params.fdr}} --topn {{params.topn}}"""

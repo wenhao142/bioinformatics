@@ -1,0 +1,15 @@
+*******************************************************************
+* Genome-wide Complex Trait Analysis (GCTA)
+* version v1.95.0 Mac
+* (C) 2010-present, Yang Lab, Westlake University
+* Please report bugs to Jian Yang <jian.yang@westlake.edu.cn>
+*******************************************************************
+Analysis started at 15:03:12 CST on Mon Jul 21 2025.
+Hostname: houjunrendeMacBook-Pro.local
+
+Accepted options:
+--bfile test
+Error: 
+  invalid option "--bgen".
+
+An error occurs, please check the options or data

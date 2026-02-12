@@ -1,0 +1,79 @@
+"""
+Minimal offline Snakemake pipeline:
+- normalize a local VCF/BCF with bcftools
+- export core columns to TSV
+- load into Postgres (table: variants) for quick querying/visualization
+
+Dependencies: bcftools, psql (Postgres client). Configure DSN in config/local_demo.yaml.
+"""
+
+configfile: "config/local_demo.yaml"
+
+import os
+
+WORKDIR = config.get("workdir", ".")
+RESULTS = config.get("output_dir", "results/local_demo")
+
+workdir: WORKDIR
+
+
+rule all:
+    input:
+        f"{RESULTS}/variants.tsv",
+        f"{RESULTS}/load_variants.done",
+
+
+rule normalize_variants:
+    input:
+        vcf=config["input_vcf"],
+        ref=config["reference_fa"],
+    output:
+        vcf=f"{RESULTS}/normalized.vcf.gz",
+    log:
+        f"{RESULTS}/logs/normalize.log",
+    shell:
+        r"""
+        mkdir -p $(dirname {output.vcf}) $(dirname {log})
+        bcftools norm --fasta-ref {input.ref} --output-type z --threads 4 \
+            -o {output.vcf} {input.vcf} 2> {log}
+        bcftools index -f {output.vcf}
+        """
+
+
+rule vcf_to_tsv:
+    input:
+        vcf=rules.normalize_variants.output.vcf,
+    output:
+        tsv=f"{RESULTS}/variants.tsv",
+    log:
+        f"{RESULTS}/logs/vcf_to_tsv.log",
+    shell:
+        r"""
+        mkdir -p $(dirname {output.tsv}) $(dirname {log})
+        bcftools query -H -f '%CHROM\t%POS\t%REF\t%ALT\t%QUAL\t%FILTER\n' {input.vcf} \
+            > {output.tsv} 2> {log}
+        """
+
+
+rule load_postgres:
+    input:
+        tsv=f"{RESULTS}/variants.tsv",
+    output:
+        touch(f"{RESULTS}/load_variants.done"),
+    log:
+        f"{RESULTS}/logs/load_postgres.log",
+    params:
+        table=config["postgres"]["table_variants"],
+        host=config["postgres"]["host"],
+        port=config["postgres"]["port"],
+        user=config["postgres"]["user"],
+        db=config["postgres"]["db"],
+        password=config["postgres"]["password"],
+    shell:
+        r"""
+        mkdir -p $(dirname {output})
+        export PGPASSWORD={params.password}
+        psql --host {params.host} --port {params.port} --username {params.user} --dbname {params.db} \
+          -c "\copy {params.table}(chr,pos,ref,alt,qual,filter_status) FROM '{input.tsv}' WITH (FORMAT csv, DELIMITER E'\t', HEADER true)" \
+          > {log} 2>&1
+        """

@@ -1,0 +1,20 @@
+sample	title	source_name_ch1	tissue	gender	disease
+GSM2577046	C01 (Control 1)	Peripheral blood, replica 1	whole blood	Female	healthy
+GSM2577047	C02 (Control 2)	Peripheral blood, replica 2	whole blood	Female	healthy
+GSM2577048	C03 (Control 3)	Peripheral blood, replica 3	whole blood	Female	healthy
+GSM2577049	C04 (Control 4)	Peripheral blood, replica 4	whole blood	Female	healthy
+GSM2577050	C05 (Control 5)	Peripheral blood, replica 5	whole blood	Female	healthy
+GSM2577051	C06 (Control 6)	Peripheral blood, replica 6	whole blood	Female	healthy
+GSM2577052	C07 (Control 7)	Peripheral blood, replica 7	whole blood	Female	healthy
+GSM2577053	C08 (Control 8)	Peripheral blood, replica 8	whole blood	Female	healthy
+GSM2577054	C09 (Control 9)	Peripheral blood, replica 9	whole blood	Female	healthy
+GSM2577055	C010 (Control 10)	Peripheral blood, replica 10	whole blood	Female	healthy
+GSM2577056	AP1 (Dementia 1)	Peripheral blood, replica 1	whole blood	Female	advanced Alzheimer's disease
+GSM2577057	AP2 (Dementia 2)	Peripheral blood, replica 2	whole blood	Female	advanced Alzheimer's disease
+GSM2577058	AP3 (Dementia 3)	Peripheral blood, replica 3	whole blood	Female	advanced Alzheimer's disease
+GSM2577059	AP4 (Dementia 4)	Peripheral blood, replica 4	whole blood	Female	advanced Alzheimer's disease
+GSM2577060	AP5 (Dementia 5)	Peripheral blood, replica 5	whole blood	Female	advanced Alzheimer's disease
+GSM2577061	AP6 (Dementia 6)	Peripheral blood, replica 6	whole blood	Female	advanced Alzheimer's disease
+GSM2577062	AP8 (Dementia 7)	Peripheral blood, replica 7	whole blood	Female	advanced Alzheimer's disease
+GSM2577063	AP9 (Dementia 8)	Peripheral blood, replica 8	whole blood	Female	advanced Alzheimer's disease
+GSM2577064	AP10 (Dementia 9)	Peripheral blood, replica 9	whole blood	Female	advanced Alzheimer's disease

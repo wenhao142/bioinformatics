@@ -1,0 +1,177 @@
+import os
+import gzip
+import psycopg2
+from io import BytesIO
+from typing import List, TypedDict, Optional
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+
+from api.auth import current_user
+
+router = APIRouter(prefix="/variants", tags=["variants"])
+
+
+class Variant(TypedDict):
+    chr: str
+    pos: int
+    ref: str
+    alt: str
+    qual: Optional[float]
+    filter: str
+
+
+class PgVariantStore:
+    def __init__(self):
+        self.conn = psycopg2.connect(self._dsn())
+        self.conn.autocommit = True
+        self._ensure_table()
+
+    def _dsn(self) -> str:
+        dsn = os.getenv("DATABASE_URL")
+        if dsn:
+            return dsn
+        return (
+            f"dbname={os.getenv('POSTGRES_DB', 'omics')} "
+            f"user={os.getenv('POSTGRES_USER', 'postgres')} "
+            f"password={os.getenv('POSTGRES_PASSWORD', 'postgres')} "
+            f"host={os.getenv('POSTGRES_HOST', 'localhost')} "
+            f"port={os.getenv('POSTGRES_PORT', '5432')}"
+        )
+
+    def _ensure_table(self):
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS variants (
+                    id SERIAL PRIMARY KEY,
+                    chr TEXT NOT NULL,
+                    pos INTEGER NOT NULL,
+                    ref TEXT NOT NULL,
+                    alt TEXT NOT NULL,
+                    qual DOUBLE PRECISION,
+                    filter_status TEXT
+                );
+                CREATE INDEX IF NOT EXISTS variants_chr_pos_idx ON variants(chr, pos);
+                """
+            )
+
+    def insert_many(self, rows: List[Variant]):
+        with self.conn.cursor() as cur:
+            cur.executemany(
+                "INSERT INTO variants (chr, pos, ref, alt, qual, filter_status) VALUES (%s,%s,%s,%s,%s,%s)",
+                [
+                    (v["chr"], v["pos"], v["ref"], v["alt"], v["qual"], v["filter"])
+                    for v in rows
+                ],
+            )
+
+    def query(self, chr: str, start: int, end: int) -> List[Variant]:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT chr, pos, ref, alt, qual, filter_status FROM variants WHERE chr=%s AND pos BETWEEN %s AND %s ORDER BY pos LIMIT 1000",
+                (chr, start, end),
+            )
+            return [
+                {
+                    "chr": r[0],
+                    "pos": r[1],
+                    "ref": r[2],
+                    "alt": r[3],
+                    "qual": r[4],
+                    "filter": r[5],
+                }
+                for r in cur.fetchall()
+            ]
+
+    def stats(self):
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM variants")
+            total = cur.fetchone()[0]
+        return {"total_variants": total}
+
+
+class MemoryVariantStore:
+    def __init__(self):
+        self.rows: List[Variant] = []
+
+    def insert_many(self, rows: List[Variant]):
+        self.rows.extend(rows)
+
+    def query(self, chr: str, start: int, end: int) -> List[Variant]:
+        return [v for v in self.rows if v["chr"] == chr and start <= v["pos"] <= end][:1000]
+
+    def stats(self):
+        return {"total_variants": len(self.rows)}
+
+
+def get_store():
+    if os.getenv("VARIANTS_USE_DB", "false").lower() in ("1", "true", "yes", "on"):
+        try:
+            return PgVariantStore()
+        except Exception as exc:  # pragma: no cover - fallback
+            raise RuntimeError(f"Failed to init Postgres variant store: {exc}")
+    return MemoryVariantStore()
+
+
+STORE = get_store()
+
+
+def parse_vcf_bytes(data: bytes) -> List[Variant]:
+    rows: List[Variant] = []
+    buf = BytesIO(data)
+    opener = gzip.open if data[:2] == b"\x1f\x8b" else lambda x: x
+    fh = opener(buf)
+    for line in fh:
+        if isinstance(line, bytes):
+            line = line.decode("utf-8")
+        if line.startswith("#"):
+            continue
+        parts = line.strip().split("\t")
+        if len(parts) < 6:
+            continue
+        chrom, pos, _id, ref, alt, qual, filt = parts[:7]
+        try:
+            pos_int = int(pos)
+        except ValueError:
+            continue
+        try:
+            qual_val = float(qual) if qual not in (".", "") else None
+        except ValueError:
+            qual_val = None
+        for a in alt.split(","):
+            rows.append(
+                {
+                    "chr": chrom,
+                    "pos": pos_int,
+                    "ref": ref,
+                    "alt": a,
+                    "qual": qual_val,
+                    "filter": filt,
+                }
+            )
+    return rows
+
+
+@router.post("/ingest")
+def ingest_vcf(file: UploadFile = File(...), project_id: str | None = None, user=Depends(current_user)):
+    data = file.file.read()
+    variants = parse_vcf_bytes(data)
+    if not variants:
+        raise HTTPException(status_code=400, detail="No variants parsed")
+    STORE.insert_many(variants)
+    return {"ingested": len(variants), "project_id": project_id}
+
+
+@router.get("")
+def list_variants(
+    chr: str = Query(..., description="chromosome, e.g., chr1"),
+    start: int = Query(1),
+    end: int = Query(250_000_000),
+    user=Depends(current_user),
+):
+    return {"variants": STORE.query(chr, start, end)}
+
+
+@router.get("/stats")
+def variant_stats(user=Depends(current_user)):
+    return STORE.stats()

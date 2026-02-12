@@ -1,0 +1,35 @@
+gse_ids:
+  - GSE63061      # AD vs Control, blood microarray
+  - GSE63060      # AD vs Control, blood microarray
+  - GSE97760      # AD vs Control, blood microarray (existing)
+  - GSE3492       # HRT vs Placebo, post-menopause microarray
+
+# which GSE to use to build menopause signatures
+menopause_sets:
+  - GSE3492
+
+# design per dataset (must exist in pheno.tsv after fetch)
+designs:
+  GSE63061:
+    group_col: "diagnosis"
+    case: "Alzheimer"
+    ctrl: "Control"
+  GSE63060:
+    group_col: "diagnosis"
+    case: "Alzheimer"
+    ctrl: "Control"
+  GSE97760:
+    group_col: "disease"
+    case: "advanced Alzheimer's disease"
+    ctrl: "healthy"
+  GSE3492:
+    group_col: "treatment"
+    case: "HRT"
+    ctrl: "Placebo"
+
+signature:
+  logfc: 1
+  fdr: 0.05
+
+# AD dataset used for signature scoring
+ad_gse: "GSE63061"

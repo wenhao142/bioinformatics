@@ -1,0 +1,199 @@
+import csv
+import os
+from pathlib import Path
+
+configfile: "config/config.yaml"
+
+# Load sample/accession map
+def build_region_opts(region_str: str) -> str:
+    if not region_str:
+        return ""
+    cleaned = region_str.replace("CHR", "chr").replace("Chr", "chr")
+    if cleaned.startswith("chr"):
+        cleaned = cleaned[3:]
+    if ":" in cleaned and "-" in cleaned:
+        chrom, span = cleaned.split(":", 1)
+        start, end = span.split("-", 1)
+        return f"--chr {chrom} --from-bp {start} --to-bp {end}"
+    return ""
+
+SAMPLES = []
+with open(config["samples_tsv"]) as fh:
+    header = fh.readline().strip().split("\t")
+    for row in csv.DictReader(fh, fieldnames=header, delimiter="\t"):
+        SAMPLES.append({"sample": row["sample"], "acc": row["sra"]})
+
+SAMPLE_IDS = [s["sample"] for s in SAMPLES]
+ACC_BY_SAMPLE = {s["sample"]: s["acc"] for s in SAMPLES}
+SRA_DIR = "sra"
+FASTQ_DIR = "data/fastq"
+QC_DIR = "qc/fastqc"
+BAM_DIR = "bam"
+TARGETS = config.get("target_regions", [{"name": "ALL", "interval": None}])
+
+rule all:
+    input:
+        expand("results/finemap/{sample}.{target}.cred.txt",
+               sample=SAMPLE_IDS,
+               target=[t["name"] for t in TARGETS])
+
+rule prefetch_sra:
+    output:
+        f"{SRA_DIR}/{{acc}}/{{acc}}.sra"
+    params:
+        sra_bin=config.get("sra_bin", "prefetch"),
+        max_size="500G"
+    shell:
+        "{params.sra_bin}/prefetch --max-size {params.max_size} --output-directory " + SRA_DIR + " {wildcards.acc}"
+
+rule fasterq_dump:
+    input:
+        f"{SRA_DIR}/{{acc}}/{{acc}}.sra"
+    output:
+        fastq1=f"{FASTQ_DIR}/{{acc}}_1.fastq.gz",
+        fastq2=f"{FASTQ_DIR}/{{acc}}_2.fastq.gz"
+    params:
+        sra_bin=config.get("sra_bin", "fasterq-dump"),
+        tmp="tmp/{acc}",
+        extra=config["params"].get("fasterq_dump", "--split-files")
+    threads: config["threads"].get("fastq", 4)
+    shell:
+        (
+            "mkdir -p {params.tmp} " + FASTQ_DIR + " && "
+            "{params.sra_bin}/fasterq-dump {params.extra} --threads {threads} --temp {params.tmp} {input} --outdir " + FASTQ_DIR + " && "
+            "gzip -f " + FASTQ_DIR + "/{wildcards.acc}_1.fastq && gzip -f " + FASTQ_DIR + "/{wildcards.acc}_2.fastq"
+        )
+
+rule fastqc:
+    input:
+        f"{FASTQ_DIR}/{{acc}}_1.fastq.gz",
+        f"{FASTQ_DIR}/{{acc}}_2.fastq.gz"
+    output:
+        f"{QC_DIR}/{{acc}}_1_fastqc.zip",
+        f"{QC_DIR}/{{acc}}_2_fastqc.zip"
+    threads: config["threads"].get("qc", 4)
+    shell:
+        "mkdir -p " + QC_DIR + " && fastqc -t {threads} -o " + QC_DIR + " {input}"
+
+rule align_bwa:
+    input:
+        r1=lambda wildcards: f"{FASTQ_DIR}/{ACC_BY_SAMPLE[wildcards.sample]}_1.fastq.gz",
+        r2=lambda wildcards: f"{FASTQ_DIR}/{ACC_BY_SAMPLE[wildcards.sample]}_2.fastq.gz"
+    output:
+        bam=temp(f"{BAM_DIR}/{{sample}}.namesort.bam")
+    params:
+        ref=config["ref"]["fasta"],
+        bwa_index=config["ref"].get("bwa_index_prefix"),
+        extra=config["params"].get("bwa", "-M"),
+        read_group=lambda wildcards: f"@RG\\tID:{wildcards.sample}\\tSM:{wildcards.sample}\\tPL:ILLUMINA"
+    threads: config["threads"].get("align", 8)
+    shell:
+        (
+            "mkdir -p " + BAM_DIR + " && "
+            "bwa-mem2 mem {params.extra} -t {threads} -R '{params.read_group}' {params.ref} {input.r1} {input.r2} "
+            "| samtools sort -@ {threads} -n -o {output.bam}"
+        )
+
+rule fixmate:
+    input:
+        bam=f"{BAM_DIR}/{{sample}}.namesort.bam"
+    output:
+        bam=temp(f"{BAM_DIR}/{{sample}}.fixmate.bam")
+    threads: config["threads"].get("align", 8)
+    shell:
+        "samtools fixmate -m -@ {threads} {input.bam} {output.bam}"
+
+rule sort_coord:
+    input:
+        bam=f"{BAM_DIR}/{{sample}}.fixmate.bam"
+    output:
+        bam=f"{BAM_DIR}/{{sample}}.sorted.bam"
+    threads: config["threads"].get("align", 8)
+    shell:
+        "samtools sort -@ {threads} -o {output.bam} {input.bam}"
+
+rule markdup:
+    input:
+        bam=f"{BAM_DIR}/{{sample}}.sorted.bam"
+    output:
+        bam=f"{BAM_DIR}/{{sample}}.markdup.bam",
+        bai=f"{BAM_DIR}/{{sample}}.markdup.bam.bai"
+    threads: config["threads"].get("align", 8)
+    shell:
+        (
+            "samtools markdup -@ {threads} {input.bam} {output.bam} && "
+            "samtools index {output.bam}"
+        )
+
+rule haplotype_caller:
+    input:
+        bam=f"{BAM_DIR}/{{sample}}.markdup.bam",
+        bai=f"{BAM_DIR}/{{sample}}.markdup.bam.bai"
+    output:
+        gvcf="results/gvcf/{sample}.g.vcf.gz"
+    params:
+        ref=config["ref"]["fasta"],
+        extra=config["params"].get("gatk_hc", "-ERC GVCF")
+    threads: config["threads"].get("haplotypecaller", 4)
+    shell:
+        (
+            "mkdir -p results/gvcf && "
+            "gatk HaplotypeCaller -R {params.ref} -I {input.bam} -O {output.gvcf} {params.extra}"
+        )
+
+rule genotype_gvcf:
+    input:
+        gvcf="results/gvcf/{sample}.g.vcf.gz"
+    output:
+        vcf="results/vcf/{sample}.vcf.gz"
+    params:
+        ref=config["ref"]["fasta"]
+    threads: 4
+    shell:
+        (
+            "mkdir -p results/vcf && "
+            "gatk GenotypeGVCFs -R {params.ref} -V {input.gvcf} -O {output.vcf}"
+        )
+
+rule plink_region:
+    input:
+        vcf="results/vcf/{sample}.vcf.gz"
+    output:
+        bed="results/plink/{sample}.{target}.bed",
+        bim="results/plink/{sample}.{target}.bim",
+        fam="results/plink/{sample}.{target}.fam"
+    params:
+        region_opts=lambda wildcards: build_region_opts(next((t["interval"] for t in TARGETS if t["name"] == wildcards.target), None))
+    threads: 2
+    shell:
+        (
+            "mkdir -p results/plink && "
+            "plink2 --vcf {input.vcf} --make-bed --double-id --out results/plink/{wildcards.sample}.{wildcards.target} "
+            "{params.region_opts}"
+        )
+
+rule gcta_cojo:
+    input:
+        bed="results/plink/{sample}.{target}.bed",
+        bim="results/plink/{sample}.{target}.bim",
+        fam="results/plink/{sample}.{target}.fam"
+    output:
+        "results/gcta/{sample}.{target}.cojo.cma"
+    threads: 1
+    shell:
+        (
+            "mkdir -p results/gcta && "
+            "echo 'TODO: run GCTA COJO with summary stats once available' > {output}"
+        )
+
+rule finemap:
+    input:
+        cojo="results/gcta/{sample}.{target}.cojo.cma"
+    output:
+        "results/finemap/{sample}.{target}.cred.txt"
+    threads: 2
+    shell:
+        (
+            "mkdir -p results/finemap && "
+            "echo 'TODO: run FINEMAP with region-specific inputs' > {output}"
+        )

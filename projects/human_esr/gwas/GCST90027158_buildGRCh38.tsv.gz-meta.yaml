@@ -1,0 +1,37 @@
+# Study meta-data
+gwas_id: GCST90027158
+author_notes: "1. Bellenguez, C. et al. New insights into the genetic etiology of
+  Alzheimer’s disease and related dementias. MedRxiv, 2020.10.01.20200659 (2020)\n
+  2. n_cases : Total number of cases included in the meta-analysis; n_controls : Total
+  number of controls included in the meta-analysis; het_isq : I^2 statistic which
+  measures heterogeneity on scale of 0-100%; het_pvalue : P-value for heterogeneity
+  statistic; variant_alternate_id : Marker ID with format chromosome:position:reference_allele:alternate_allele
+  (according to GRCh38)"
+gwas_catalog_api: https://www.ebi.ac.uk/gwas/rest/api/studies/GCST90027158
+date_metadata_last_modified: 2025-01-14
+
+# Trait Information
+trait_description:
+  - Alzheimer's disease
+ontology_mapping:
+  - MONDO_0004975
+
+# Genotyping Information
+genome_assembly: GRCh38
+genotyping_technology:
+  - Genome-wide genotyping array
+
+# Sample Information
+samples:
+  - sample_ancestry_category:
+      - European
+    sample_size: 487511
+
+# Summary Statistic information
+data_file_name: GCST90027158_buildGRCh38.tsv.gz
+file_type: pre-GWAS-SSF
+data_file_md5sum: 9d23b9ba23532da38ab83fb061bab18f
+
+# Harmonization status
+is_harmonised: false
+is_sorted: false

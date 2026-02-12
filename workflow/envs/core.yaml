@@ -1,0 +1,16 @@
+name: ad-finemap
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python>=3.10
+  - snakemake
+  - fastqc
+  - fastp
+  - bwa-mem2
+  - samtools
+  - gatk4
+  - bcftools
+  - plink2
+  - gcta
+  - pigz

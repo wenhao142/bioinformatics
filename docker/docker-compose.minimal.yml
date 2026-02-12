@@ -1,0 +1,169 @@
+# Minimal local stack for free, offline-friendly experiments
+# Services: MinIO (S3-compatible), Postgres+pgvector, OpenSearch (single node)
+
+version: "3.9"
+
+services:
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web console
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  postgres:
+    image: ankane/pgvector:latest
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  opensearch:
+    image: opensearchproject/opensearch:2.11.1
+    restart: unless-stopped
+    environment:
+      - cluster.name=opensearch-local
+      - node.name=os-node1
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - DISABLE_SECURITY_PLUGIN=true
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "9200:9200"   # REST API
+      - "9600:9600"   # Performance analyzer
+    volumes:
+      - os-data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  adminer:
+    image: adminer:latest
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    ports:
+      - "8080:8080"
+
+  uploader:
+    image: python:3.11-slim
+    restart: unless-stopped
+    working_dir: /app
+    command: bash -lc "pip install --no-cache-dir -r app/requirements.txt && streamlit run app/upload_gui.py --server.address 0.0.0.0 --server.port 8501"
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_DEFAULT_BUCKET: omics-raw
+    depends_on:
+      - minio
+    volumes:
+      - ..:/app
+
+  viewer:
+    image: python:3.11-slim
+    restart: unless-stopped
+    working_dir: /app
+    command: bash -lc "pip install --no-cache-dir -r app/requirements.txt && streamlit run app/variant_viewer.py --server.address 0.0.0.0 --server.port 8502"
+    ports:
+      - "8502:8502"
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+    depends_on:
+      - postgres
+    volumes:
+      - ..:/app
+
+  auto_loader:
+    image: python:3.11-slim
+    restart: unless-stopped
+    working_dir: /app
+    command: >
+      bash -lc "apt-get update &&
+                apt-get install -y --no-install-recommends bcftools postgresql-client &&
+                pip install --no-cache-dir boto3 &&
+                python scripts/watch_and_load.py"
+    env_file:
+      - .env
+    environment:
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_DEFAULT_BUCKET: omics-raw
+      MINIO_WATCH_PREFIX: ""
+      MINIO_POLL_SECONDS: 60
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_TABLE: variants
+    depends_on:
+      - minio
+      - postgres
+    volumes:
+      - ..:/app
+
+  auto_caller:
+    image: python:3.11-slim
+    restart: unless-stopped
+    working_dir: /app
+    command: >
+      bash -lc "apt-get update &&
+                apt-get install -y --no-install-recommends minimap2 samtools bcftools tabix postgresql-client &&
+                pip install --no-cache-dir boto3 &&
+                python scripts/watch_and_call.py"
+    env_file:
+      - .env
+    environment:
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_DEFAULT_BUCKET: omics-raw
+      MINIO_WATCH_PREFIX_FASTQ: raw/      # adjust if you keep FASTQ elsewhere
+      MINIO_POLL_SECONDS_FASTQ: 120
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_TABLE: variants
+      REF_FASTA: /app/data/GRCh38.fa      # mount your reference here
+      CALLER_THREADS: 4
+    depends_on:
+      - minio
+      - postgres
+    volumes:
+      - ..:/app
+
+volumes:
+  minio-data:
+  pg-data:
+  os-data:

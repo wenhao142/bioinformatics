@@ -1,0 +1,27 @@
+project: ad_sex_finemap
+sra_bin: "./tools/sratoolkit.3.3.0-mac-arm64/bin"
+samples_tsv: "samples.tsv"
+ref:
+  fasta: "ref/GRCh38.chr6_14.fa"
+  bwa_index_prefix: "ref/GRCh38.chr6_14.fa"
+  dbsnp_vcf: ""
+target_regions:
+  - name: "ESR1"
+    interval: "chr6:146809107-157129619"   # ESR1 locus ±5Mb (GRCh38)
+  - name: "ESR2"
+    interval: "chr14:59226707-69338613"   # ESR2 locus ±5Mb (GRCh38)
+threads:
+  download: 8
+  fastq: 8
+  qc: 4
+  align: 8
+  haplotypecaller: 4
+params:
+  fasterq_dump: "--split-files --progress"
+  fastp: "--detect_adapter_for_pe --thread 8"
+  bwa: "-M"
+  gatk_hc: "-ERC GVCF"
+  plink_region: "chr6:1500000-1700000"  # example region; override per run
+fine_map:
+  region_padding_mb: 5
+  gcta_pvalue: 1e-5

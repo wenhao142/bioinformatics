@@ -1,0 +1,13 @@
+# Paths are local-only; point to your own files.
+workdir: .
+input_vcf: data/example.vcf.gz        # replace with your VCF/BCF (bgzipped, indexed)
+reference_fa: data/GRCh38.fa         # replace with your reference FASTA (indexed)
+output_dir: results/local_demo
+
+postgres:
+  host: localhost
+  port: 5432
+  user: postgres
+  password: postgres
+  db: omics
+  table_variants: variants
