@@ -37,6 +37,12 @@ export default function LocusPage({ params }: { params: { region: string } }) {
               format: 'bed',
               url: trackUrl,
             },
+            {
+              name: 'Variants',
+              type: 'annotation',
+              format: 'bed',
+              url: `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:18000'}/variants/bed?chr=${chr}&start=${start}&end=${end}`,
+            },
           ],
         });
       } catch (e: any) {

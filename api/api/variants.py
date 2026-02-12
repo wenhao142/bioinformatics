@@ -4,7 +4,7 @@ import psycopg2
 from io import BytesIO
 from typing import List, TypedDict, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, Response
 
 from api.auth import current_user
 
@@ -207,6 +207,24 @@ def list_variants(
 @router.get("/stats")
 def variant_stats(user=Depends(current_user)):
     return STORE.stats()
+
+
+@router.get("/bed", response_class=Response)
+def variants_bed(
+    chr: str = Query(..., description="chromosome, e.g., chr1"),
+    start: int = Query(1),
+    end: int = Query(250_000_000),
+    user=Depends(current_user),
+):
+    variants = STORE.query(chr, start, end)
+    lines = []
+    for v in variants:
+        bed_start = max(0, v["pos"] - 1)
+        bed_end = v["pos"]
+        name = f"{v['ref']}>{v['alt']}"
+        lines.append(f"{v['chr']}\t{bed_start}\t{bed_end}\t{name}\t0\t.")
+    body = "\n".join(lines) + ("\n" if lines else "")
+    return Response(content=body, media_type="text/plain")
 
 
 @router.get("/nearest")
