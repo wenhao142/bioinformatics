@@ -4,11 +4,14 @@ import psycopg2
 from io import BytesIO
 from typing import List, TypedDict, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, Response
+import jwt
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, Response, Security
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from api.auth import current_user
+from api.auth import current_user, JWT_SECRET
 
 router = APIRouter(prefix="/variants", tags=["variants"])
+bearer = HTTPBearer(auto_error=False)
 
 
 class Variant(TypedDict):
@@ -214,8 +217,20 @@ def variants_bed(
     chr: str = Query(..., description="chromosome, e.g., chr1"),
     start: int = Query(1),
     end: int = Query(250_000_000),
-    user=Depends(current_user),
+    token: Optional[str] = Query(None, description="JWT token (optional if Authorization header present)"),
+    credentials: HTTPAuthorizationCredentials | None = Security(bearer),
 ):
+    # authorize via header or token query
+    raw_token = token
+    if credentials and credentials.credentials:
+        raw_token = credentials.credentials
+    if not raw_token:
+        raise HTTPException(status_code=401, detail="Missing token")
+    try:
+        jwt.decode(raw_token, JWT_SECRET, algorithms=["HS256"])
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
     variants = STORE.query(chr, start, end)
     lines = []
     for v in variants:

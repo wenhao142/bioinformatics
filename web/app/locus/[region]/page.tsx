@@ -18,6 +18,8 @@ export default function LocusPage({ params }: { params: { region: string } }) {
     process.env.NEXT_PUBLIC_GENE_TRACK_URL && process.env.NEXT_PUBLIC_GENE_TRACK_URL.trim().length > 0
       ? process.env.NEXT_PUBLIC_GENE_TRACK_URL
       : '/genes.sample.bed';
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:18000';
+  const apiToken = process.env.NEXT_PUBLIC_API_TOKEN;
 
   useEffect(() => {
     let browser: any;
@@ -41,7 +43,8 @@ export default function LocusPage({ params }: { params: { region: string } }) {
               name: 'Variants',
               type: 'annotation',
               format: 'bed',
-              url: `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:18000'}/variants/bed?chr=${chr}&start=${start}&end=${end}`,
+              url: `${apiUrl}/variants/bed?chr=${chr}&start=${start}&end=${end}${apiToken ? `&token=${apiToken}` : ''}`,
+              headers: apiToken ? { Authorization: `Bearer ${apiToken}` } : undefined,
             },
           ],
         });
@@ -55,7 +58,7 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         browser.dispose();
       }
     };
-  }, [params.region, trackUrl]);
+  }, [params.region, trackUrl, apiUrl, apiToken]);
 
   return (
     <main className="min-h-screen p-6 space-y-4">
