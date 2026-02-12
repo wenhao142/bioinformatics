@@ -19,8 +19,8 @@ export default function LocusPage({ params }: { params: { region: string } }) {
     let browser: any;
     const load = async () => {
       try {
-        const mod = await import('igv');
-        const igv = (mod as any).default ?? mod; // igv exports UMD default
+        const mod = await import('igv/dist/igv.esm'); // ESM build exposes createBrowser
+        const igv = (mod as any).default ?? mod;
         const decoded = decodeURIComponent(params.region);
         const { chr, start, end } = parseRegion(decoded);
         browser = await igv.createBrowser(containerRef.current as HTMLDivElement, {
