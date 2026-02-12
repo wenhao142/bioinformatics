@@ -98,6 +98,9 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimerâ
 - [ ] T4.3 Evidence panel cards
   - Acceptance:
     - Cards show sources or clearly labeled inferences
+- [ ] T4.x Host gene annotation track
+  - Acceptance:
+    - Genes track served from our own MinIO/S3 (or signed URL), not public igv.org; CORS configured and loads in `/locus/*`
 
 ## EPIC 5 â€” Literature + Research direction
 - [ ] T5.1 PubMed provider (online mode only)
