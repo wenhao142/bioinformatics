@@ -224,6 +224,23 @@ function normalizePopupData(dataList: any[] | undefined): EvidenceField[] {
   return fields;
 }
 
+function closeStaleIgvPopups() {
+  if (typeof document === 'undefined') {
+    return;
+  }
+  // Keep only the newest popup so previous feature dialogs do not stack.
+  const selectors = ['.igv-menu-popup', '.igv-popover'];
+  for (const selector of selectors) {
+    const nodes = Array.from(document.querySelectorAll(selector));
+    const staleNodes = nodes.slice(0, Math.max(0, nodes.length - 1));
+    staleNodes.forEach((node) => {
+      if (node instanceof HTMLElement) {
+        node.style.display = 'none';
+      }
+    });
+  }
+}
+
 function trackSourceKind(trackName: string): 'source' | 'inference' {
   return trackName === TRACK_NAMES.scores ? 'inference' : 'source';
 }
@@ -507,6 +524,7 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         };
 
         const trackClickHandler = (track: any, dataList: any[]) => {
+          window.setTimeout(() => closeStaleIgvPopups(), 0);
           const trackName = typeof track?.name === 'string' ? track.name : 'Unknown';
           const source =
             trackName === TRACK_NAMES.genes
