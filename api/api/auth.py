@@ -1,6 +1,5 @@
 import os
 import time
-from typing import Optional
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Security, status

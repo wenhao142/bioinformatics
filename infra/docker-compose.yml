@@ -11,7 +11,7 @@ services:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:18000}
       NEXT_PUBLIC_GENE_TRACK_URL: ${GENE_TRACK_URL:-http://localhost:19000/igv/genes.sample.bed}
     ports:
-      - "13000:3000"
+      - "${WEB_PORT:-13000}:3000"
     depends_on:
       - api
 
