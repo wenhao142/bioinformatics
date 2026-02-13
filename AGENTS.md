@@ -89,13 +89,13 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimerâ
     - Run stores params, tool versions, input hashes; rerun stable
 
 ## EPIC 4 â€” Locus Explorer (genome viewer)
-- [ ] T4.1 Embed genome viewer (choose igv.js first)
+- [x] T4.1 Embed genome viewer (choose igv.js first)
   - Acceptance:
     - `/locus/chr:start-end` shows tracks UI
-- [ ] T4.2 Tracks loader (genes, variants, scores)
+- [x] T4.2 Tracks loader (genes, variants, scores)
   - Acceptance:
     - Tracks toggle; clicking feature updates evidence panel
-- [ ] T4.3 Evidence panel cards
+- [x] T4.3 Evidence panel cards
   - Acceptance:
     - Cards show sources or clearly labeled inferences
 - [ ] T4.x Host gene annotation track
@@ -103,10 +103,10 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimerâ
     - Genes track served from our own MinIO/S3 (or signed URL), not public igv.org; CORS configured and loads in `/locus/*`
 
 ## EPIC 5 â€” Literature + Research direction
-- [ ] T5.1 PubMed provider (online mode only)
+- [x] T5.1 PubMed provider (online mode only)
   - Acceptance:
     - Top genes retrieve PubMed metadata; store pmid + title + year
-- [ ] T5.2 Offline fallback research-direction generator (template/rules)
+- [x] T5.2 Offline fallback research-direction generator (template/rules)
   - Acceptance:
     - Offline mode still produces hypotheses/experiments section
 - [ ] T5.3 Optional cloud LLM summarizer (must cite evidence bundle)

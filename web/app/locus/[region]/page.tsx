@@ -11,7 +11,7 @@ const parseRegion = (region: string) => {
   return { chr: chrPart, start, end };
 };
 
-type TrackKey = 'genes' | 'variants' | 'scores';
+type TrackKey = 'genes' | 'variants';
 type TrackState = Record<TrackKey, boolean>;
 
 type EvidenceField = {
@@ -45,20 +45,34 @@ type LiteratureRecord = {
   source: string;
 };
 
-const TRACK_ORDER: TrackKey[] = ['genes', 'variants', 'scores'];
+type VariantWindowSnp = {
+  id: string;
+  chr: string;
+  pos: number;
+  ref: string;
+  alt: string;
+  score: number;
+  filter: string;
+};
+
+type TooltipPosition = {
+  x: number;
+  y: number;
+};
+
+const TRACK_ORDER: TrackKey[] = ['genes', 'variants'];
 const TRACK_NAMES: Record<TrackKey, string> = {
   genes: 'Genes',
   variants: 'Variants',
-  scores: 'Scores',
 };
 
 const INITIAL_TRACK_STATE: TrackState = {
   genes: true,
   variants: true,
-  scores: true,
 };
 
 const SNP_HALF_WINDOW_BP = 60;
+const VARIANT_WINDOW_HALF_BP = 600;
 
 type LocusRange = {
   chr: string;
@@ -241,17 +255,60 @@ function closeStaleIgvPopups() {
   }
 }
 
+function extractHoveredGeneLocus(browser: any, event: MouseEvent): LocusRange | null {
+  const target = event.target;
+  if (!(target instanceof Node)) {
+    return null;
+  }
+
+  const trackViews = Array.isArray(browser?.trackViews) ? browser.trackViews : [];
+  for (const trackView of trackViews) {
+    if (trackView?.track?.name !== TRACK_NAMES.genes) {
+      continue;
+    }
+    const viewports = Array.isArray(trackView?.viewports) ? trackView.viewports : [];
+    for (const viewport of viewports) {
+      const viewportElement = viewport?.$viewport?.get?.(0) ?? viewport?.viewport;
+      if (!(viewportElement instanceof HTMLElement) || !viewportElement.contains(target)) {
+        continue;
+      }
+      if (typeof viewport.createClickState !== 'function' || typeof trackView.track.popupData !== 'function') {
+        continue;
+      }
+      try {
+        const clickState = viewport.createClickState(event);
+        if (!clickState) {
+          continue;
+        }
+        const popupData = trackView.track.popupData(clickState);
+        const fields = normalizePopupData(popupData);
+        const locus = extractFeatureLocus(fields);
+        if (locus) {
+          return locus;
+        }
+      } catch {
+        // Ignore transient hover parsing errors from IGV internals.
+        continue;
+      }
+    }
+  }
+  return null;
+}
+
 function trackSourceKind(trackName: string): 'source' | 'inference' {
-  return trackName === TRACK_NAMES.scores ? 'inference' : 'source';
+  return 'source';
 }
 
 export default function LocusPage({ params }: { params: { region: string } }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const browserRef = useRef<any>(null);
   const viewerInitRef = useRef(0);
+  const collapsingMultiLocusRef = useRef(false);
+  const hoverWindowKeyRef = useRef('');
   const [error, setError] = useState<string | null>(null);
   const [viewerReady, setViewerReady] = useState(false);
   const [viewerClosed, setViewerClosed] = useState(false);
+  const [viewerExpanded, setViewerExpanded] = useState(false);
   const [tracks, setTracks] = useState<TrackState>(INITIAL_TRACK_STATE);
   const [evidenceCards, setEvidenceCards] = useState<EvidenceCard[]>([]);
   const [currentLocus, setCurrentLocus] = useState('');
@@ -263,14 +320,16 @@ export default function LocusPage({ params }: { params: { region: string } }) {
   const [literatureRecords, setLiteratureRecords] = useState<LiteratureRecord[]>([]);
   const [literatureLoading, setLiteratureLoading] = useState(false);
   const [literatureError, setLiteratureError] = useState<string | null>(null);
+  const [variantWindowOpen, setVariantWindowOpen] = useState(false);
+  const [variantWindowLoading, setVariantWindowLoading] = useState(false);
+  const [variantWindowError, setVariantWindowError] = useState<string | null>(null);
+  const [variantWindowLabel, setVariantWindowLabel] = useState('');
+  const [variantWindowSnps, setVariantWindowSnps] = useState<VariantWindowSnp[]>([]);
+  const [variantWindowPos, setVariantWindowPos] = useState<TooltipPosition>({ x: 20, y: 20 });
   const genesTrackUrl =
     process.env.NEXT_PUBLIC_GENE_TRACK_URL && process.env.NEXT_PUBLIC_GENE_TRACK_URL.trim().length > 0
       ? process.env.NEXT_PUBLIC_GENE_TRACK_URL
       : '/genes.sample.bed';
-  const scoresTrackUrl =
-    process.env.NEXT_PUBLIC_SCORE_TRACK_URL && process.env.NEXT_PUBLIC_SCORE_TRACK_URL.trim().length > 0
-      ? process.env.NEXT_PUBLIC_SCORE_TRACK_URL
-      : '/scores.sample.bed';
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:18000';
   const decodedRegion = useMemo(() => decodeURIComponent(params.region), [params.region]);
   const { chr, start, end } = useMemo(() => parseRegion(decodedRegion), [decodedRegion]);
@@ -331,6 +390,94 @@ export default function LocusPage({ params }: { params: { region: string } }) {
     setAuthError(null);
     invalidateToken();
   };
+
+  const hideVariantWindow = useCallback(() => {
+    setVariantWindowOpen(false);
+    setVariantWindowLoading(false);
+    setVariantWindowError(null);
+    hoverWindowKeyRef.current = '';
+  }, []);
+
+  const loadVariantWindow = useCallback(
+    async (target: LocusRange) => {
+      if (!apiToken) {
+        setAuthError('Variants window needs login token.');
+        return;
+      }
+      const center = Math.floor((target.start + target.end) / 2);
+      const startBp = Math.max(1, center - VARIANT_WINDOW_HALF_BP);
+      const endBp = Math.max(startBp + 1, center + VARIANT_WINDOW_HALF_BP);
+
+      setVariantWindowOpen(true);
+      setVariantWindowLoading(true);
+      setVariantWindowError(null);
+      setVariantWindowLabel(`${target.chr}:${startBp}-${endBp}`);
+
+      try {
+        const response = await fetch(
+          `${apiUrl}/variants?chr=${encodeURIComponent(target.chr)}&start=${startBp}&end=${endBp}`,
+          {
+            headers: {
+              Authorization: `Bearer ${apiToken}`,
+            },
+          }
+        );
+        if (response.status === 401) {
+          invalidateToken('Token expired or invalid. Please sign in again.');
+          setVariantWindowError('Token expired. Please sign in again.');
+          setVariantWindowSnps([]);
+          return;
+        }
+        if (!response.ok) {
+          throw new Error(`Failed to load variants (${response.status})`);
+        }
+        const payload = await response.json().catch(() => ({}));
+        const rows = Array.isArray(payload?.variants) ? payload.variants : [];
+        const snps: VariantWindowSnp[] = rows
+          .map((row: any, index: number) => {
+            const pos = Number(row?.pos);
+            if (!Number.isFinite(pos)) {
+              return null;
+            }
+            const score = Number(row?.qual);
+            return {
+              id: `${row?.chr || target.chr}-${pos}-${row?.ref || 'N'}-${row?.alt || 'N'}-${index}`,
+              chr: String(row?.chr || target.chr),
+              pos,
+              ref: String(row?.ref || 'N'),
+              alt: String(row?.alt || 'N'),
+              score: Number.isFinite(score) ? score : 0,
+              filter: String(row?.filter || 'NA'),
+            };
+          })
+          .filter(Boolean) as VariantWindowSnp[];
+        snps.sort((a, b) => a.pos - b.pos);
+        setVariantWindowSnps(snps);
+        if (snps.length === 0) {
+          setVariantWindowError('No SNPs found in this sliding window.');
+        }
+      } catch (e: any) {
+        setVariantWindowSnps([]);
+        setVariantWindowError(e?.message || 'Failed to load SNP window');
+      } finally {
+        setVariantWindowLoading(false);
+      }
+    },
+    [apiToken, apiUrl, invalidateToken]
+  );
+
+  useEffect(() => {
+    if (!viewerExpanded) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setViewerExpanded(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [viewerExpanded]);
 
   useEffect(() => {
     if (!apiToken) {
@@ -393,6 +540,16 @@ export default function LocusPage({ params }: { params: { region: string } }) {
     }
     return trimmed;
   }, [evidenceCards]);
+
+  const variantScoreMax = useMemo(() => {
+    let max = 0;
+    for (const row of variantWindowSnps) {
+      if (row.score > max) {
+        max = row.score;
+      }
+    }
+    return max > 0 ? max : 1;
+  }, [variantWindowSnps]);
 
   useEffect(() => {
     if (!selectedGene) {
@@ -469,6 +626,7 @@ export default function LocusPage({ params }: { params: { region: string } }) {
     let cancelled = false;
     const initId = ++viewerInitRef.current;
     const containerEl = containerRef.current;
+    let mountEl: HTMLDivElement | null = null;
 
     if (viewerClosed) {
       if (browserRef.current) {
@@ -488,6 +646,11 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           return;
         }
         containerEl.innerHTML = '';
+        mountEl = document.createElement('div');
+        mountEl.className = 'igv-mount';
+        mountEl.style.minHeight = '100%';
+        mountEl.style.height = '100%';
+        containerEl.appendChild(mountEl);
 
         setError(null);
         setViewerReady(false);
@@ -500,13 +663,16 @@ export default function LocusPage({ params }: { params: { region: string } }) {
 
         const mod = await import('igv/dist/igv.esm'); // ESM build exposes createBrowser
         const igv = (mod as any).default ?? mod;
-        const browser = await igv.createBrowser(containerEl as HTMLDivElement, {
+        const browser = await igv.createBrowser(mountEl as HTMLDivElement, {
           genome: 'hg38',
           locus: `${chr}:${start}-${end}`,
           tracks: [],
         });
         if (cancelled || initId !== viewerInitRef.current) {
           browser.dispose();
+          if (mountEl?.parentElement === containerEl) {
+            mountEl.remove();
+          }
           return;
         }
 
@@ -521,6 +687,32 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           const s = Math.max(1, Math.floor(activeStart));
           const e = Math.max(s, Math.floor(activeEnd));
           setCurrentLocus(`${activeChr}:${s}-${e}`);
+
+          // Force single-locus mode to avoid duplicated IGV locus bars in UI.
+          if (
+            Array.isArray(frames) &&
+            frames.length > 1 &&
+            browserRef.current === browser &&
+            !collapsingMultiLocusRef.current
+          ) {
+            collapsingMultiLocusRef.current = true;
+            window.setTimeout(() => {
+              void (async () => {
+                try {
+                  if (browserRef.current !== browser) {
+                    return;
+                  }
+                  if (browser.referenceFrameList && browser.referenceFrameList.length > 1) {
+                    await browser.search(`${activeChr}:${s}-${e}`);
+                  }
+                } catch {
+                  // Ignore collapse failure and keep viewer alive.
+                } finally {
+                  collapsingMultiLocusRef.current = false;
+                }
+              })();
+            }, 0);
+          }
         };
 
         const trackClickHandler = (track: any, dataList: any[]) => {
@@ -531,7 +723,7 @@ export default function LocusPage({ params }: { params: { region: string } }) {
               ? genesTrackUrl
               : trackName === TRACK_NAMES.variants
                 ? `${apiUrl}/variants/bed`
-                : scoresTrackUrl;
+                : genesTrackUrl;
 
           const sourceKind = trackSourceKind(trackName);
           const popupFields = normalizePopupData(dataList);
@@ -596,12 +788,79 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         browserRef.current.dispose();
         browserRef.current = null;
       }
+      collapsingMultiLocusRef.current = false;
+      if (mountEl && mountEl.parentElement === containerEl) {
+        mountEl.remove();
+      }
       if (containerEl) {
         containerEl.innerHTML = '';
       }
       setViewerReady(false);
     };
-  }, [apiToken, apiUrl, chr, end, genesTrackUrl, scoresTrackUrl, start, viewerClosed]);
+  }, [apiToken, apiUrl, chr, end, genesTrackUrl, loadVariantWindow, start, viewerClosed]);
+
+  useEffect(() => {
+    if (!viewerReady || viewerClosed || !browserRef.current || !containerRef.current) {
+      return;
+    }
+    const browser = browserRef.current;
+    const containerEl = containerRef.current;
+    let cancelled = false;
+    let lastHoverAt = 0;
+
+    const placeVariantWindow = (event: MouseEvent) => {
+      const tooltipWidth = Math.min(560, Math.max(340, Math.floor(window.innerWidth * 0.42)));
+      const tooltipHeight = 290;
+      const gap = 14;
+      const nextX = Math.min(
+        Math.max(10, event.clientX + gap),
+        Math.max(10, window.innerWidth - tooltipWidth - 10)
+      );
+      const nextY = Math.min(
+        Math.max(10, event.clientY + gap),
+        Math.max(10, window.innerHeight - tooltipHeight - 10)
+      );
+      setVariantWindowPos({ x: nextX, y: nextY });
+    };
+
+    const onMouseMove = (event: MouseEvent) => {
+      if (cancelled || browserRef.current !== browser) {
+        return;
+      }
+      const now = Date.now();
+      if (now - lastHoverAt < 60) {
+        return;
+      }
+      lastHoverAt = now;
+
+      const locus = extractHoveredGeneLocus(browser, event);
+      if (!locus) {
+        hideVariantWindow();
+        return;
+      }
+      placeVariantWindow(event);
+      const center = Math.floor((locus.start + locus.end) / 2);
+      const key = `${locus.chr}:${center}`;
+      if (hoverWindowKeyRef.current === key) {
+        setVariantWindowOpen(true);
+        return;
+      }
+      hoverWindowKeyRef.current = key;
+      void loadVariantWindow(locus);
+    };
+
+    const onMouseLeave = () => {
+      hideVariantWindow();
+    };
+
+    containerEl.addEventListener('mousemove', onMouseMove);
+    containerEl.addEventListener('mouseleave', onMouseLeave);
+    return () => {
+      cancelled = true;
+      containerEl.removeEventListener('mousemove', onMouseMove);
+      containerEl.removeEventListener('mouseleave', onMouseLeave);
+    };
+  }, [hideVariantWindow, loadVariantWindow, viewerClosed, viewerReady]);
 
   useEffect(() => {
     if (!viewerReady || !browserRef.current) {
@@ -630,12 +889,6 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           format: 'bed',
           url: `${apiUrl}/variants/bed?chr=${chr}&start=${start}&end=${end}${tokenPart}`,
           headers: apiToken ? { Authorization: `Bearer ${apiToken}` } : undefined,
-        },
-        scores: {
-          name: TRACK_NAMES.scores,
-          type: 'annotation',
-          format: 'bed',
-          url: scoresTrackUrl,
         },
       };
 
@@ -674,7 +927,7 @@ export default function LocusPage({ params }: { params: { region: string } }) {
     return () => {
       cancelled = true;
     };
-  }, [apiToken, apiUrl, chr, end, genesTrackUrl, invalidateToken, scoresTrackUrl, start, tracks, viewerReady]);
+  }, [apiToken, apiUrl, chr, end, genesTrackUrl, invalidateToken, start, tracks, viewerReady]);
 
   return (
     <main className="locus-page">
@@ -728,21 +981,40 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         ))}
       </section>
       <section className="viewer-toolbar">
-        <button
-          type="button"
-          className="viewer-toggle"
-          onClick={() => {
-            setError(null);
-            setViewerClosed((prev) => !prev);
-          }}
-        >
-          {viewerClosed ? 'Open IGV' : 'Close IGV'}
-        </button>
+        <div className="viewer-toolbar-actions">
+          <button
+            type="button"
+            className="viewer-toggle"
+            onClick={() => {
+              setError(null);
+              setViewerClosed((prev) => !prev);
+              if (!viewerClosed) {
+                setViewerExpanded(false);
+              }
+            }}
+          >
+            {viewerClosed ? 'Open IGV' : 'Close IGV'}
+          </button>
+          {!viewerClosed ? (
+            <button
+              type="button"
+              className="viewer-expand"
+              onClick={() => setViewerExpanded((prev) => !prev)}
+            >
+              {viewerExpanded ? 'Restore Size' : 'Expand Viewer'}
+            </button>
+          ) : null}
+        </div>
       </section>
       {error ? (
         <div className="error">{error}</div>
       ) : (
-        <section className="viewer-grid">
+        <section className={`viewer-grid ${viewerExpanded ? 'viewer-grid-expanded' : ''}`}>
+          {viewerExpanded ? (
+            <button type="button" className="viewer-overlay-close" onClick={() => setViewerExpanded(false)}>
+              Exit Fullscreen
+            </button>
+          ) : null}
           {viewerClosed ? (
             <div className="viewer viewer-closed">
               <p>IGV viewer is closed.</p>
@@ -844,6 +1116,40 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           </aside>
         </section>
       )}
+      {variantWindowOpen ? (
+        <section
+          className="variant-window"
+          style={{ left: `${variantWindowPos.x}px`, top: `${variantWindowPos.y}px` }}
+          aria-live="polite"
+        >
+          <div className="variant-window-head">
+            <div>
+              <h3>SNP Score</h3>
+              <p>{variantWindowLabel}</p>
+            </div>
+          </div>
+          {variantWindowLoading ? (
+            <p className="placeholder">Loading SNP scores...</p>
+          ) : variantWindowError ? (
+            <p className="variant-window-error">{variantWindowError}</p>
+          ) : (
+            <div className="variant-window-scroll">
+              <div className="snp-chart-strip">
+                {variantWindowSnps.map((snp) => (
+                  <div key={`bar-${snp.id}`} className="snp-bar-item" title={`${snp.chr}:${snp.pos}`}>
+                    <span>{snp.pos}</span>
+                    <div
+                      className="snp-bar"
+                      style={{ height: `${Math.max(10, Math.round((snp.score / variantScoreMax) * 140))}px` }}
+                    />
+                    <span>{snp.score.toFixed(1)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      ) : null}
       <style jsx>{`
         .locus-page {
           --paper: #eef4f4;
@@ -858,17 +1164,15 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           min-height: 100vh;
           padding: 28px;
           font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif;
-          font-size: 20pt;
+          font-size: 14pt;
           line-height: 1.35;
           color: var(--ink);
-          background:
-            radial-gradient(circle at 1px 1px, rgba(37, 97, 114, 0.12) 1px, transparent 0) 0 0 / 18px 18px,
-            linear-gradient(160deg, #e6f0f2 0%, #f5fbfc 45%, #d8e7ec 100%);
+          background: #e6f0f2;
           animation: pageIn 360ms ease-out;
           overflow-x: hidden;
         }
         .locus-page :is(p, span, label, input, button, a, h1, h2, h3) {
-          font-size: 20pt !important;
+          font-size: 14pt !important;
         }
         .page-title {
           margin: 0 0 4px;
@@ -898,8 +1202,7 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           padding: 14px;
           border: 1px solid var(--line);
           border-radius: 14px;
-          background:
-            linear-gradient(180deg, rgba(255, 254, 250, 0.96), rgba(248, 239, 220, 0.94));
+          background: #f8efdc;
           box-shadow:
             0 8px 24px rgba(44, 63, 52, 0.08),
             inset 0 1px 0 rgba(255, 255, 255, 0.7);
@@ -909,8 +1212,14 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           justify-content: flex-end;
           margin-bottom: 12px;
         }
+        .viewer-toolbar-actions {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+        }
         .viewer-toggle,
-        .viewer-reopen {
+        .viewer-reopen,
+        .viewer-expand {
           min-height: 56px;
           border-radius: 10px;
           border: 1px solid #2f4a3a;
@@ -925,6 +1234,10 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         .viewer-reopen {
           background: #b84f28;
           border-color: #b84f28;
+        }
+        .viewer-expand {
+          background: #0f3f4d;
+          border-color: #0f3f4d;
         }
         .auth-bar {
           display: flex;
@@ -1032,6 +1345,38 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           gap: 18px;
           align-items: start;
           overflow-x: hidden;
+        }
+        .viewer-grid-expanded {
+          position: fixed;
+          inset: 10px;
+          z-index: 120;
+          background: rgba(238, 244, 244, 0.98);
+          border: 2px solid #9fb8bf;
+          border-radius: 16px;
+          padding: 12px;
+          grid-template-columns: 1fr;
+          box-shadow: 0 24px 64px rgba(11, 31, 37, 0.35);
+          backdrop-filter: blur(3px);
+          overflow: auto;
+        }
+        .viewer-overlay-close {
+          position: sticky;
+          top: 0;
+          margin-left: auto;
+          z-index: 2;
+          min-height: 44px;
+          border-radius: 8px;
+          border: 1px solid #0f3f4d;
+          background: #0f3f4d;
+          color: #ffffff;
+          padding: 6px 12px;
+          cursor: pointer;
+        }
+        .viewer-grid-expanded .evidence {
+          display: none;
+        }
+        .viewer-grid-expanded .viewer {
+          min-height: calc(100vh - 56px);
         }
         .viewer {
           min-height: 560px;
@@ -1260,6 +1605,78 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           font-size: 13px;
           font-weight: 700;
         }
+        .variant-window {
+          position: fixed;
+          width: min(560px, calc(100vw - 20px));
+          max-height: 290px;
+          border: 2px solid #8cb1ba;
+          border-radius: 16px;
+          background: #f7fcfd;
+          box-shadow: 0 20px 56px rgba(12, 34, 41, 0.32);
+          z-index: 2147483647;
+          display: flex;
+          flex-direction: column;
+          isolation: isolate;
+          pointer-events: none;
+        }
+        .variant-window-head {
+          display: flex;
+          align-items: center;
+          justify-content: flex-start;
+          gap: 10px;
+          padding: 10px 12px;
+          border-bottom: 1px solid #b7d0d6;
+          background: #edf7f9;
+        }
+        .variant-window-head h3 {
+          margin: 0;
+          font-size: 12pt !important;
+          font-weight: 800;
+          color: #103946;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }
+        .variant-window-head p {
+          margin: 2px 0 0;
+          font-size: 10pt !important;
+          color: #3a5961;
+        }
+        .variant-window-error {
+          margin: 0;
+          padding: 10px 12px;
+          font-size: 11pt !important;
+          color: #8f251f;
+          font-weight: 700;
+        }
+        .variant-window-scroll {
+          overflow-x: auto;
+          overflow-y: hidden;
+          padding: 8px 10px 12px;
+          display: flex;
+          flex-direction: row;
+          align-items: flex-end;
+        }
+        .snp-chart-strip {
+          display: flex;
+          align-items: flex-end;
+          gap: 8px;
+          min-width: max-content;
+          padding: 4px 6px;
+        }
+        .snp-bar-item {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 4px;
+          min-width: 62px;
+          font-size: 9pt !important;
+        }
+        .snp-bar {
+          width: 36px;
+          border-radius: 7px 7px 3px 3px;
+          background: #cc4a2d;
+          box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+        }
         @keyframes pageIn {
           from {
             opacity: 0.4;
@@ -1280,9 +1697,19 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           .viewer-grid {
             grid-template-columns: 1fr;
           }
+          .viewer-grid-expanded {
+            inset: 0;
+            border-radius: 0;
+            padding: 8px;
+          }
           .viewer,
           .evidence {
             min-height: 420px;
+          }
+          .variant-window {
+            left: 8px;
+            width: auto;
+            max-height: 240px;
           }
         }
       `}</style>
@@ -1296,13 +1723,13 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         .igv-navbar {
           min-height: 48px !important;
           height: 48px !important;
-          background: linear-gradient(180deg, #214535 0%, #1b392c 100%) !important;
+          background: #1f4335 !important;
           border-color: #1b392c !important;
           color: #fff6e4 !important;
         }
         .igv-navbar .igv-current-genome {
           color: #fff0d8 !important;
-          font-size: 20pt !important;
+          font-size: 14pt !important;
           font-weight: 700 !important;
           letter-spacing: 0.03em !important;
         }
@@ -1318,7 +1745,7 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           height: 44px !important;
           border-color: #d58d45 !important;
           border-width: 2px !important;
-          font-size: 20pt !important;
+          font-size: 14pt !important;
           color: #1f2a24 !important;
           background-color: #fff9ec !important;
         }
@@ -1330,7 +1757,7 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           border-color: #d58d45 !important;
           background-color: #fff2d6 !important;
           color: #2f3d34 !important;
-          font-size: 20pt !important;
+          font-size: 14pt !important;
           font-weight: 700 !important;
           letter-spacing: 0.03em !important;
           padding-left: 10px !important;
@@ -1365,7 +1792,7 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           border-radius: 8px !important;
         }
         .igv-track-label {
-          font-size: 20pt !important;
+          font-size: 14pt !important;
           font-weight: 700 !important;
           border-width: 2px !important;
           border-color: #2d493a !important;
