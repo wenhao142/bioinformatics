@@ -846,44 +846,48 @@ export default function LocusPage({ params }: { params: { region: string } }) {
       )}
       <style jsx>{`
         .locus-page {
-          --paper: #f3ecde;
-          --paper-soft: #fbf7ef;
-          --ink: #1f2a24;
-          --ink-muted: #4d5c53;
-          --panel: #fffdf7;
-          --line: #cfbf9c;
-          --accent: #b84f28;
-          --accent-soft: #e98e4d;
-          --deep: #234031;
+          --paper: #eef4f4;
+          --paper-soft: #f8fcfc;
+          --ink: #142328;
+          --ink-muted: #3d565d;
+          --panel: #ffffff;
+          --line: #9fb8bf;
+          --accent: #cc4a2d;
+          --accent-soft: #ef8c4b;
+          --deep: #0f3f4d;
           min-height: 100vh;
           padding: 28px;
-          font-family: 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif;
+          font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif;
+          font-size: 20pt;
+          line-height: 1.35;
           color: var(--ink);
           background:
-            radial-gradient(circle at 1px 1px, rgba(35, 64, 49, 0.08) 1px, transparent 0) 0 0 / 16px 16px,
-            linear-gradient(160deg, #efe5d0 0%, #f6f0e4 45%, #e9dfc8 100%);
+            radial-gradient(circle at 1px 1px, rgba(37, 97, 114, 0.12) 1px, transparent 0) 0 0 / 18px 18px,
+            linear-gradient(160deg, #e6f0f2 0%, #f5fbfc 45%, #d8e7ec 100%);
           animation: pageIn 360ms ease-out;
           overflow-x: hidden;
         }
+        .locus-page :is(p, span, label, input, button, a, h1, h2, h3) {
+          font-size: 20pt !important;
+        }
         .page-title {
           margin: 0 0 4px;
-          font-family: 'Palatino Linotype', 'Book Antiqua', Georgia, serif;
-          font-size: clamp(30px, 4.2vw, 42px);
+          font-family: 'IBM Plex Serif', Georgia, serif;
+          font-size: clamp(40px, 4.8vw, 58px);
           line-height: 1.15;
           letter-spacing: 0.01em;
-          color: #1a2d22;
+          color: #163641;
           text-shadow: 0 1px 0 #fff;
         }
         .region-line {
           margin: 0 0 18px;
           display: inline-block;
-          padding: 8px 12px;
+          padding: 12px 18px;
           border: 1px solid var(--line);
           border-radius: 999px;
-          font-size: 13px;
           font-weight: 700;
           color: var(--ink-muted);
-          background: rgba(255, 253, 247, 0.86);
+          background: rgba(250, 255, 255, 0.9);
           backdrop-filter: blur(2px);
         }
         .toggle-bar {
@@ -907,16 +911,15 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         }
         .viewer-toggle,
         .viewer-reopen {
-          height: 34px;
-          border-radius: 9px;
+          min-height: 56px;
+          border-radius: 10px;
           border: 1px solid #2f4a3a;
           background: #2f4a3a;
           color: #fff6e8;
-          font-size: 12px;
           font-weight: 700;
           letter-spacing: 0.05em;
           text-transform: uppercase;
-          padding: 0 12px;
+          padding: 8px 16px;
           cursor: pointer;
         }
         .viewer-reopen {
@@ -949,14 +952,13 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           color: #8a3f20;
         }
         .auth-input {
-          height: 32px;
+          min-height: 56px;
           min-width: 150px;
           border: 1px solid #c9b284;
           border-radius: 8px;
-          padding: 0 10px;
+          padding: 8px 12px;
           background: #fffcf5;
           color: #213329;
-          font-size: 13px;
         }
         .auth-input:focus {
           outline: 2px solid #e98e4d;
@@ -964,16 +966,15 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         }
         .auth-login,
         .auth-clear {
-          height: 32px;
+          min-height: 56px;
           border-radius: 8px;
           border: 1px solid #b84f28;
           background: #b84f28;
           color: #fff6e8;
-          font-size: 12px;
           font-weight: 700;
           letter-spacing: 0.04em;
           text-transform: uppercase;
-          padding: 0 12px;
+          padding: 8px 14px;
           cursor: pointer;
         }
         .auth-login:disabled {
@@ -993,14 +994,13 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           display: flex;
           align-items: center;
           gap: 9px;
-          font-size: 13px;
           font-weight: 700;
           text-transform: uppercase;
           letter-spacing: 0.06em;
           color: #2f4035;
           border: 1px solid #c6b48d;
           border-radius: 999px;
-          padding: 8px 12px;
+          padding: 10px 16px;
           background: #fff9ec;
           transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
         }
@@ -1013,8 +1013,8 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           box-shadow: 0 4px 14px rgba(184, 79, 40, 0.18);
         }
         .toggle-item input {
-          width: 16px;
-          height: 16px;
+          width: 24px;
+          height: 24px;
           accent-color: #b84f28;
         }
         .error {
@@ -1078,13 +1078,12 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           margin-bottom: 10px;
         }
         .evidence-clear {
-          height: 30px;
+          min-height: 52px;
           border-radius: 8px;
           border: 1px solid #9a3f21;
           background: #9a3f21;
           color: #fff6e8;
-          padding: 0 10px;
-          font-size: 12px;
+          padding: 8px 14px;
           font-weight: 700;
           letter-spacing: 0.04em;
           text-transform: uppercase;
@@ -1288,11 +1287,11 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         }
       `}</style>
       <style jsx global>{`
-        /* IGV visual language: deep green + rust orange, intentionally non-purple */
+        /* IGV visual language: slate + orange, non-purple */
         .igv-root-div,
         .igv-container,
         .igv-column-container {
-          font-family: 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif !important;
+          font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif !important;
         }
         .igv-navbar {
           min-height: 48px !important;
@@ -1303,7 +1302,7 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         }
         .igv-navbar .igv-current-genome {
           color: #fff0d8 !important;
-          font-size: 14px !important;
+          font-size: 20pt !important;
           font-weight: 700 !important;
           letter-spacing: 0.03em !important;
         }
@@ -1316,22 +1315,22 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           .igv-locus-size-group
           .igv-search-container
           input.igv-search-input {
-          height: 30px !important;
+          height: 44px !important;
           border-color: #d58d45 !important;
           border-width: 2px !important;
-          font-size: 13px !important;
+          font-size: 20pt !important;
           color: #1f2a24 !important;
           background-color: #fff9ec !important;
         }
         .igv-navbar .igv-navbar-button {
-          min-height: 30px !important;
-          line-height: 28px !important;
+          min-height: 44px !important;
+          line-height: 42px !important;
           border-radius: 8px !important;
           border-width: 2px !important;
           border-color: #d58d45 !important;
           background-color: #fff2d6 !important;
           color: #2f3d34 !important;
-          font-size: 12px !important;
+          font-size: 20pt !important;
           font-weight: 700 !important;
           letter-spacing: 0.03em !important;
           padding-left: 10px !important;
@@ -1344,13 +1343,13 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         }
         .igv-navbar .igv-navbar-right-container .igv-zoom-widget div:first-child,
         .igv-navbar .igv-navbar-right-container .igv-zoom-widget div:last-child {
-          width: 32px !important;
-          height: 32px !important;
+          width: 44px !important;
+          height: 44px !important;
           color: #ffd9a3 !important;
         }
         .igv-navbar .igv-navbar-right-container .igv-zoom-widget svg {
-          width: 24px !important;
-          height: 24px !important;
+          width: 30px !important;
+          height: 30px !important;
         }
         .igv-gear-menu-column > div > div {
           width: 24px !important;
@@ -1366,7 +1365,7 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           border-radius: 8px !important;
         }
         .igv-track-label {
-          font-size: 12px !important;
+          font-size: 20pt !important;
           font-weight: 700 !important;
           border-width: 2px !important;
           border-color: #2d493a !important;
