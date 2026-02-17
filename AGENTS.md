@@ -48,37 +48,37 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimer�
 # Roadmap (MVP)
 
 ## EPIC 0 — Scaffolding & CI
-- [ ] T0.1 Monorepo scaffold + docker compose (web+api+postgres+minio+worker)
+- [x] T0.1 Monorepo scaffold + docker compose (web+api+postgres+minio+worker)
   - Acceptance:
     - `docker compose up` brings up services and UI loads
-- [ ] T0.2 CI gate (lint + unit tests + container build)
+- [x] T0.2 CI gate (lint + unit tests + container build)
   - Acceptance:
     - PR cannot merge unless CI green
 
 ## EPIC 1 — Auth / RBAC / Audit
-- [ ] T1.1 Auth (local accounts) + stub for OIDC
+- [x] T1.1 Auth (local accounts) + stub for OIDC
   - Acceptance:
     - Login works; API protected by tokens
-- [ ] T1.2 Project RBAC (admin/analyst/viewer)
+- [x] T1.2 Project RBAC (admin/analyst/viewer)
   - Acceptance:
     - Viewer cannot upload or run analyses
-- [ ] T1.3 Audit log
+- [x] T1.3 Audit log
   - Acceptance:
     - Upload/run/export recorded and queryable
 
 ## EPIC 2 — Data ingest
-- [ ] T2.1 Upload API + object storage (S3 interface; MinIO in intranet)
+- [x] T2.1 Upload API + object storage (S3 interface; MinIO in intranet)
   - Acceptance:
     - Upload creates dataset record with hash + storage URI
-- [ ] T2.2 VCF parser (MVP fields) + indexing
+- [x] T2.2 VCF parser (MVP fields) + indexing
   - Acceptance:
     - Variants list can be queried by chr; basic stats visible
-- [ ] T2.3 Transcriptomics/Proteomics diff-table parser
+- [x] T2.3 Transcriptomics/Proteomics diff-table parser
   - Acceptance:
     - Summary stats shown; standardized schema stored
 
 ## EPIC 3 — Baseline scoring (explainable)
-- [ ] T3.1 Variant→Gene mapping (MVP: nearest gene / annotation-based)
+- [x] T3.1 Variant→Gene mapping (MVP: nearest gene / annotation-based)
   - Acceptance:
     - Each top locus links to candidate gene(s)
 - [ ] T3.2 Evidence join (omics + genomics) + rank aggregation
@@ -87,9 +87,15 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimer�
 - [ ] T3.3 Run reproducibility metadata
   - Acceptance:
     - Run stores params, tool versions, input hashes; rerun stable
+- [ ] T3.4 Causal scoring pipeline (MVP, offline)
+  - Acceptance:
+    - Given uploaded VCF + optional expr/prot diff tables, API produces per-variant and per-gene scores (simple LD window + annotation weights); results saved per project/run and queryable via API/UI
+- [ ] T3.5 Report auto-generation
+  - Acceptance:
+    - `/report/{project_id}/{run_id}` returns Markdown/HTML summarizing top loci/genes, evidence tables, methods, and reproducibility metadata
 
 ## EPIC 4 — Locus Explorer (genome viewer)
-- [ ] T4.1 Embed genome viewer (choose igv.js first)
+- [x] T4.1 Embed genome viewer (choose igv.js first)
   - Acceptance:
     - `/locus/chr:start-end` shows tracks UI
 - [ ] T4.2 Tracks loader (genes, variants, scores)
@@ -98,9 +104,12 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimer�
 - [ ] T4.3 Evidence panel cards
   - Acceptance:
     - Cards show sources or clearly labeled inferences
-- [ ] T4.x Host gene annotation track
+- [x] T4.x Host gene annotation track
   - Acceptance:
     - Genes track served from our own MinIO/S3 (or signed URL), not public igv.org; CORS configured and loads in `/locus/*`
+- [ ] T4.y IGV UI redesign
+  - Acceptance:
+    - Custom shell around igv.js: clear track headers, pinned overview strip, smooth in/out transitions on region change, mobile-friendly controls; user can toggle tracks (genes/variants/scores) and see animated highlight when selecting a feature
 
 ## EPIC 5 — Literature + Research direction
 - [ ] T5.1 PubMed provider (online mode only)
