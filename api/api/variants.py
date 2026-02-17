@@ -93,6 +93,22 @@ class PgVariantStore:
             total = cur.fetchone()[0]
         return {"total_variants": total}
 
+    def all_variants(self) -> List[Variant]:
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT chr, pos, ref, alt, qual, filter_status FROM variants LIMIT 100000")
+            return [
+                {
+                    "chr": r[0],
+                    "pos": r[1],
+                    "ref": r[2],
+                    "alt": r[3],
+                    "qual": r[4],
+                    "filter": r[5],
+                    "gene": None,
+                }
+                for r in cur.fetchall()
+            ]
+
 
 class MemoryVariantStore:
     def __init__(self):
@@ -106,6 +122,9 @@ class MemoryVariantStore:
 
     def stats(self):
         return {"total_variants": len(self.rows)}
+
+    def all_variants(self) -> List[Variant]:
+        return list(self.rows)
 
 
 def get_store():

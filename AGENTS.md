@@ -81,7 +81,7 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimerâ
 - [x] T3.1 Variantâ†’Gene mapping (MVP: nearest gene / annotation-based)
   - Acceptance:
     - Each top locus links to candidate gene(s)
-- [ ] T3.2 Evidence join (omics + genomics) + rank aggregation
+- [x] T3.2 Evidence join (omics + genomics) + rank aggregation
   - Acceptance:
     - Top genes/loci list generated with feature breakdown
 - [ ] T3.3 Run reproducibility metadata

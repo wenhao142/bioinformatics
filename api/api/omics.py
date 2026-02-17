@@ -46,6 +46,11 @@ def _parse_expr_file(file_bytes: bytes) -> List[ExprRecord]:
     return records
 
 
+def get_expr_table() -> List[ExprRecord]:
+    # return a shallow copy to avoid external mutation
+    return list(_EXPR_TABLE)
+
+
 @router.post("/expr/upload")
 def upload_expr(file: UploadFile = File(...), user=Depends(current_user)):
     data = file.file.read()
