@@ -1,4 +1,2 @@
-chr1	40	41	SCORE=0.82	0	.
-chr1	210	211	SCORE=0.56	0	.
-chr1	710	711	SCORE=0.91	0	.
-chr2	140	141	SCORE=0.48	0	.
+chr1	50	51	score1	5	+
+chr1	800	801	score2	12	+

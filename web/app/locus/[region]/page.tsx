@@ -306,250 +306,22 @@ export default function LocusPage({ params }: { params: { region: string } }) {
   const collapsingMultiLocusRef = useRef(false);
   const hoverWindowKeyRef = useRef('');
   const [error, setError] = useState<string | null>(null);
-  const [viewerReady, setViewerReady] = useState(false);
-  const [viewerClosed, setViewerClosed] = useState(false);
-  const [viewerExpanded, setViewerExpanded] = useState(false);
-  const [tracks, setTracks] = useState<TrackState>(INITIAL_TRACK_STATE);
-  const [evidenceCards, setEvidenceCards] = useState<EvidenceCard[]>([]);
-  const [currentLocus, setCurrentLocus] = useState('');
-  const [apiToken, setApiToken] = useState<string | null>(process.env.NEXT_PUBLIC_API_TOKEN || null);
-  const [authEmail, setAuthEmail] = useState('viewer@example.com');
-  const [authPassword, setAuthPassword] = useState('password');
-  const [authLoading, setAuthLoading] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [literatureRecords, setLiteratureRecords] = useState<LiteratureRecord[]>([]);
-  const [literatureLoading, setLiteratureLoading] = useState(false);
-  const [literatureError, setLiteratureError] = useState<string | null>(null);
-  const [variantWindowOpen, setVariantWindowOpen] = useState(false);
-  const [variantWindowLoading, setVariantWindowLoading] = useState(false);
-  const [variantWindowError, setVariantWindowError] = useState<string | null>(null);
-  const [variantWindowLabel, setVariantWindowLabel] = useState('');
-  const [variantWindowSnps, setVariantWindowSnps] = useState<VariantWindowSnp[]>([]);
-  const [variantWindowPos, setVariantWindowPos] = useState<TooltipPosition>({ x: 20, y: 20 });
-  const genesTrackUrl =
+  const [selected, setSelected] = useState<{ track?: string; name?: string; pos?: string } | null>(
+    null,
+  );
+  const [showGenes, setShowGenes] = useState(true);
+  const [showVariants, setShowVariants] = useState(true);
+  const [showScores, setShowScores] = useState(true);
+  const trackUrl =
     process.env.NEXT_PUBLIC_GENE_TRACK_URL && process.env.NEXT_PUBLIC_GENE_TRACK_URL.trim().length > 0
       ? process.env.NEXT_PUBLIC_GENE_TRACK_URL
       : '/genes.sample.bed';
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:18000';
-  const decodedRegion = useMemo(() => decodeURIComponent(params.region), [params.region]);
-  const { chr, start, end } = useMemo(() => parseRegion(decodedRegion), [decodedRegion]);
-
-  useEffect(() => {
-    setCurrentLocus(decodedRegion);
-  }, [decodedRegion]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-    if (apiToken) {
-      return;
-    }
-    const localToken = window.localStorage.getItem('ad_api_token');
-    if (localToken) {
-      setApiToken(localToken);
-    }
-  }, [apiToken]);
-
-  const invalidateToken = useCallback((reason?: string) => {
-    setApiToken(null);
-    if (reason) {
-      setAuthError(reason);
-    }
-    if (typeof window !== 'undefined') {
-      window.localStorage.removeItem('ad_api_token');
-    }
-  }, []);
-
-  const handleLogin = async () => {
-    try {
-      setAuthError(null);
-      setAuthLoading(true);
-      const response = await fetch(`${apiUrl}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: authEmail, password: authPassword }),
-      });
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || 'Login failed');
-      }
-      const payload: LoginResponse = await response.json();
-      setApiToken(payload.access_token);
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem('ad_api_token', payload.access_token);
-      }
-    } catch (e: any) {
-      setAuthError(e?.message || 'Login failed');
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const clearToken = () => {
-    setAuthError(null);
-    invalidateToken();
-  };
-
-  const hideVariantWindow = useCallback(() => {
-    setVariantWindowOpen(false);
-    setVariantWindowLoading(false);
-    setVariantWindowError(null);
-    hoverWindowKeyRef.current = '';
-  }, []);
-
-  const loadVariantWindow = useCallback(
-    async (target: LocusRange) => {
-      if (!apiToken) {
-        setAuthError('Variants window needs login token.');
-        return;
-      }
-      const center = Math.floor((target.start + target.end) / 2);
-      const startBp = Math.max(1, center - VARIANT_WINDOW_HALF_BP);
-      const endBp = Math.max(startBp + 1, center + VARIANT_WINDOW_HALF_BP);
-
-      setVariantWindowOpen(true);
-      setVariantWindowLoading(true);
-      setVariantWindowError(null);
-      setVariantWindowLabel(`${target.chr}:${startBp}-${endBp}`);
-
-      try {
-        const response = await fetch(
-          `${apiUrl}/variants?chr=${encodeURIComponent(target.chr)}&start=${startBp}&end=${endBp}`,
-          {
-            headers: {
-              Authorization: `Bearer ${apiToken}`,
-            },
-          }
-        );
-        if (response.status === 401) {
-          invalidateToken('Token expired or invalid. Please sign in again.');
-          setVariantWindowError('Token expired. Please sign in again.');
-          setVariantWindowSnps([]);
-          return;
-        }
-        if (!response.ok) {
-          throw new Error(`Failed to load variants (${response.status})`);
-        }
-        const payload = await response.json().catch(() => ({}));
-        const rows = Array.isArray(payload?.variants) ? payload.variants : [];
-        const snps: VariantWindowSnp[] = rows
-          .map((row: any, index: number) => {
-            const pos = Number(row?.pos);
-            if (!Number.isFinite(pos)) {
-              return null;
-            }
-            const score = Number(row?.qual);
-            return {
-              id: `${row?.chr || target.chr}-${pos}-${row?.ref || 'N'}-${row?.alt || 'N'}-${index}`,
-              chr: String(row?.chr || target.chr),
-              pos,
-              ref: String(row?.ref || 'N'),
-              alt: String(row?.alt || 'N'),
-              score: Number.isFinite(score) ? score : 0,
-              filter: String(row?.filter || 'NA'),
-            };
-          })
-          .filter(Boolean) as VariantWindowSnp[];
-        snps.sort((a, b) => a.pos - b.pos);
-        setVariantWindowSnps(snps);
-        if (snps.length === 0) {
-          setVariantWindowError('No SNPs found in this sliding window.');
-        }
-      } catch (e: any) {
-        setVariantWindowSnps([]);
-        setVariantWindowError(e?.message || 'Failed to load SNP window');
-      } finally {
-        setVariantWindowLoading(false);
-      }
-    },
-    [apiToken, apiUrl, invalidateToken]
-  );
-
-  useEffect(() => {
-    if (!viewerExpanded) {
-      return;
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setViewerExpanded(false);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [viewerExpanded]);
-
-  useEffect(() => {
-    if (!apiToken) {
-      return;
-    }
-    let cancelled = false;
-
-    const verifyToken = async () => {
-      try {
-        const probeEnd = Math.min(end, start + 1000);
-        const response = await fetch(
-          `${apiUrl}/variants/bed?chr=${encodeURIComponent(chr)}&start=${start}&end=${probeEnd}&token=${encodeURIComponent(apiToken)}`,
-          {
-            headers: {
-              Authorization: `Bearer ${apiToken}`,
-            },
-          }
-        );
-        if (cancelled) {
-          return;
-        }
-        if (response.status === 401) {
-          invalidateToken('Token expired or invalid. Please sign in again.');
-          setError(null);
-          return;
-        }
-        if (!response.ok) {
-          setError(`Variants authorization check failed (${response.status}).`);
-          return;
-        }
-        setAuthError(null);
-      } catch (e: any) {
-        if (!cancelled) {
-          setError(e?.message || 'Failed to verify API token');
-        }
-      }
-    };
-
-    void verifyToken();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [apiToken, apiUrl, chr, end, invalidateToken, start]);
-
-  const selectedGene = useMemo(() => {
-    const card = evidenceCards[0];
-    if (!card) {
-      return null;
-    }
-    const gene =
-      pickFieldValue(card.fields, ['gene', 'gene_name', 'symbol']) ??
-      (card.trackName === TRACK_NAMES.genes ? pickFieldValue(card.fields, ['name']) : null);
-    if (!gene) {
-      return null;
-    }
-    const trimmed = gene.trim();
-    if (!trimmed || !/^[A-Za-z0-9._-]+$/.test(trimmed)) {
-      return null;
-    }
-    return trimmed;
-  }, [evidenceCards]);
-
-  const variantScoreMax = useMemo(() => {
-    let max = 0;
-    for (const row of variantWindowSnps) {
-      if (row.score > max) {
-        max = row.score;
-      }
-    }
-    return max > 0 ? max : 1;
-  }, [variantWindowSnps]);
+  const apiToken = process.env.NEXT_PUBLIC_API_TOKEN;
+  const scoreTrack =
+    process.env.NEXT_PUBLIC_SCORE_TRACK_URL && process.env.NEXT_PUBLIC_SCORE_TRACK_URL.trim().length > 0
+      ? process.env.NEXT_PUBLIC_SCORE_TRACK_URL
+      : '/scores.sample.bed';
 
   useEffect(() => {
     if (!selectedGene) {
@@ -663,10 +435,51 @@ export default function LocusPage({ params }: { params: { region: string } }) {
 
         const mod = await import('igv/dist/igv.esm'); // ESM build exposes createBrowser
         const igv = (mod as any).default ?? mod;
-        const browser = await igv.createBrowser(mountEl as HTMLDivElement, {
+        const decoded = decodeURIComponent(params.region);
+        const { chr, start, end } = parseRegion(decoded);
+        const tracks: any[] = [];
+        if (showGenes) {
+          tracks.push({
+            name: 'Genes',
+            type: 'annotation',
+            format: 'bed',
+            url: trackUrl,
+          });
+        }
+        if (showVariants) {
+          tracks.push({
+            name: 'Variants',
+            type: 'annotation',
+            format: 'bed',
+            url: `${apiUrl}/variants/bed?chr=${chr}&start=${start}&end=${end}${
+              apiToken ? `&token=${apiToken}` : ''
+            }`,
+            headers: apiToken ? { Authorization: `Bearer ${apiToken}` } : undefined,
+          });
+        }
+        if (showScores) {
+          tracks.push({
+            name: 'Scores',
+            type: 'annotation',
+            format: 'bed',
+            url: scoreTrack,
+            color: '#ef4444',
+          });
+        }
+
+        browser = await igv.createBrowser(containerRef.current as HTMLDivElement, {
           genome: 'hg38',
           locus: `${chr}:${start}-${end}`,
-          tracks: [],
+          tracks,
+        });
+
+        browser.on('trackclick', (_t: any, pop: any) => {
+          if (!pop || !pop.name) return;
+          setSelected({
+            track: pop.track || 'track',
+            name: pop.name,
+            pos: pop.locus || '',
+          });
         });
         if (cancelled || initId !== viewerInitRef.current) {
           browser.dispose();
@@ -927,194 +740,57 @@ export default function LocusPage({ params }: { params: { region: string } }) {
     return () => {
       cancelled = true;
     };
-  }, [apiToken, apiUrl, chr, end, genesTrackUrl, invalidateToken, start, tracks, viewerReady]);
+  }, [params.region, trackUrl, apiUrl, apiToken, scoreTrack, showGenes, showVariants, showScores]);
 
   return (
-    <main className="locus-page">
-      <h1 className="page-title">Locus Explorer</h1>
-      <p className="region-line">Region: {decodedRegion}</p>
-      <section className="auth-bar">
-        {apiToken ? (
-          <>
-            <p className="auth-ok">API token loaded. Variants track is enabled.</p>
-            <button type="button" className="auth-clear" onClick={clearToken}>
-              Clear Token
-            </button>
-          </>
-        ) : (
-          <>
-            <p className="auth-warn">Variants track needs login token.</p>
-            <input
-              className="auth-input"
-              value={authEmail}
-              onChange={(event) => setAuthEmail(event.target.value)}
-              placeholder="email"
-            />
-            <input
-              className="auth-input"
-              type="password"
-              value={authPassword}
-              onChange={(event) => setAuthPassword(event.target.value)}
-              placeholder="password"
-            />
-            <button type="button" className="auth-login" onClick={handleLogin} disabled={authLoading}>
-              {authLoading ? 'Signing In...' : 'Sign In'}
-            </button>
-            {authError ? <span className="auth-error">{authError}</span> : null}
-          </>
-        )}
-      </section>
-      <section className="toggle-bar">
-        {TRACK_ORDER.map((key) => (
-          <label key={key} className="toggle-item">
+    <main className="min-h-screen p-6 space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold">Locus Explorer</h1>
+          <p className="text-sm text-gray-600">Region: {decodeURIComponent(params.region)}</p>
+        </div>
+        <div className="flex items-center gap-2 text-sm">
+          <label className="flex items-center gap-1">
+            <input type="checkbox" checked={showGenes} onChange={() => setShowGenes(!showGenes)} />
+            Genes
+          </label>
+          <label className="flex items-center gap-1">
             <input
               type="checkbox"
-              checked={tracks[key]}
-              disabled={key === 'variants' && !apiToken}
-              onChange={(event) => {
-                const checked = event.target.checked;
-                setTracks((prev) => ({ ...prev, [key]: checked }));
-              }}
+              checked={showVariants}
+              onChange={() => setShowVariants(!showVariants)}
             />
-            <span>{TRACK_NAMES[key]}</span>
+            Variants
           </label>
-        ))}
-      </section>
-      <section className="viewer-toolbar">
-        <div className="viewer-toolbar-actions">
-          <button
-            type="button"
-            className="viewer-toggle"
-            onClick={() => {
-              setError(null);
-              setViewerClosed((prev) => !prev);
-              if (!viewerClosed) {
-                setViewerExpanded(false);
-              }
-            }}
-          >
-            {viewerClosed ? 'Open IGV' : 'Close IGV'}
-          </button>
-          {!viewerClosed ? (
-            <button
-              type="button"
-              className="viewer-expand"
-              onClick={() => setViewerExpanded((prev) => !prev)}
-            >
-              {viewerExpanded ? 'Restore Size' : 'Expand Viewer'}
-            </button>
-          ) : null}
+          <label className="flex items-center gap-1">
+            <input type="checkbox" checked={showScores} onChange={() => setShowScores(!showScores)} />
+            Scores
+          </label>
         </div>
-      </section>
+      </div>
+
       {error ? (
         <div className="error">{error}</div>
       ) : (
-        <section className={`viewer-grid ${viewerExpanded ? 'viewer-grid-expanded' : ''}`}>
-          {viewerExpanded ? (
-            <button type="button" className="viewer-overlay-close" onClick={() => setViewerExpanded(false)}>
-              Exit Fullscreen
-            </button>
-          ) : null}
-          {viewerClosed ? (
-            <div className="viewer viewer-closed">
-              <p>IGV viewer is closed.</p>
-              <button type="button" className="viewer-reopen" onClick={() => setViewerClosed(false)}>
-                Reopen IGV
-              </button>
-            </div>
-          ) : (
-            <div ref={containerRef} className="viewer" />
-          )}
-          <aside className="evidence">
-            <div className="evidence-head">
-              <div>
-                <h2>Feature Detail</h2>
-                <p className="evidence-focus">Focus: {currentLocus || decodedRegion}</p>
+        <div className="grid md:grid-cols-[3fr,1fr] gap-4">
+          <div
+            ref={containerRef}
+            className="border rounded shadow-sm"
+            style={{ minHeight: 520 }}
+          />
+          <div className="border rounded p-3 bg-gray-50 min-h-[120px]">
+            <div className="text-sm font-semibold mb-2">Feature</div>
+            {selected ? (
+              <div className="space-y-1 text-sm">
+                <div className="text-gray-700">{selected.name}</div>
+                {selected.pos && <div className="text-gray-500">{selected.pos}</div>}
+                {selected.track && <div className="text-gray-500">Track: {selected.track}</div>}
               </div>
-              {evidenceCards.length > 0 ? (
-                <button type="button" className="evidence-clear" onClick={() => setEvidenceCards([])}>
-                  Clear Selection
-                </button>
-              ) : null}
-            </div>
-            {evidenceCards.length === 0 ? (
-              <p className="placeholder">
-                Hover on a gene/variant in IGV to see quick info, then click to pin REF/ALT and locus details here.
-              </p>
             ) : (
-              <div className="evidence-list">
-                {evidenceCards.map((card) => (
-                  <article key={card.id} className="evidence-card">
-                    <div className="evidence-meta">
-                      <div className={`evidence-pill ${card.sourceKind === 'source' ? 'pill-source' : 'pill-infer'}`}>
-                        {card.sourceLabel}
-                      </div>
-                      <p>
-                        <strong>Track:</strong> {card.trackName}
-                      </p>
-                      <p>
-                        <strong>Type:</strong> {card.sourceKind}
-                      </p>
-                      <p>
-                        <strong>Source:</strong> {card.source}
-                      </p>
-                      <p>
-                        <strong>Captured:</strong> {new Date(card.createdAt).toLocaleString()}
-                      </p>
-                      {card.zoomLocus ? (
-                        <p>
-                          <strong>Zoom:</strong> {card.zoomLocus}
-                        </p>
-                      ) : null}
-                      <p>{card.note}</p>
-                    </div>
-                    <div className="evidence-fields">
-                      {card.fields.length === 0 ? (
-                        <p className="placeholder">No popup fields returned for this click.</p>
-                      ) : (
-                        card.fields.map((field, index) => (
-                          <div key={`${card.id}-${field.name}-${index}`} className="field-row">
-                            <span className="field-name">{field.name}</span>
-                            <span className="field-value">{field.value}</span>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </article>
-                ))}
-                <section className="literature-card">
-                  <h3>PubMed</h3>
-                  <p className="literature-subtitle">
-                    Gene: <strong>{selectedGene ?? 'N/A'}</strong>
-                  </p>
-                  {literatureLoading ? (
-                    <p className="placeholder">Loading PubMed metadata...</p>
-                  ) : literatureError ? (
-                    <p className="literature-error">{literatureError}</p>
-                  ) : literatureRecords.length === 0 ? (
-                    <p className="placeholder">No linked PubMed records.</p>
-                  ) : (
-                    <div className="literature-list">
-                      {literatureRecords.map((record) => (
-                        <article key={`${record.gene}-${record.pmid}`} className="literature-item">
-                          <a
-                            href={`https://pubmed.ncbi.nlm.nih.gov/${record.pmid}/`}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            PMID {record.pmid}
-                          </a>
-                          <p>{record.title}</p>
-                          <span>{record.year ?? 'Year unknown'}</span>
-                        </article>
-                      ))}
-                    </div>
-                  )}
-                </section>
-              </div>
+              <div className="text-sm text-gray-500">Click a feature to see details</div>
             )}
-          </aside>
-        </section>
+          </div>
+        </div>
       )}
       {variantWindowOpen ? (
         <section
