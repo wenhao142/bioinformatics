@@ -98,7 +98,7 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimerâ
 - [x] T4.1 Embed genome viewer (choose igv.js first)
   - Acceptance:
     - `/locus/chr:start-end` shows tracks UI
-- [ ] T4.2 Tracks loader (genes, variants, scores)
+- [x] T4.2 Tracks loader (genes, variants, scores)
   - Acceptance:
     - Tracks toggle; clicking feature updates evidence panel
 - [ ] T4.3 Evidence panel cards
