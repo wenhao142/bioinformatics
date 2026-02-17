@@ -13,3 +13,15 @@ Services (host ports remapped to avoid conflicts):
 - minio: http://localhost:19001 (minioadmin/minioadmin123)
 
 Expected: UI loads, API health returns `{"status":"ok"}`.
+
+## Locus Explorer (T4.2)
+
+After the stack is running, open:
+
+- `http://localhost:13000/locus/chr1:1-1000`
+
+The page now supports:
+
+- Track toggles for `Genes`, `Variants`, `Scores`
+- Dynamic IGV track load/unload without page reload
+- Evidence panel updates when clicking a track feature (`trackclick`)

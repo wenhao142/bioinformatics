@@ -101,7 +101,7 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimerâ
 - [x] T4.2 Tracks loader (genes, variants, scores)
   - Acceptance:
     - Tracks toggle; clicking feature updates evidence panel
-- [ ] T4.3 Evidence panel cards
+- [x] T4.3 Evidence panel cards
   - Acceptance:
     - Cards show sources or clearly labeled inferences
 - [x] T4.x Host gene annotation track
@@ -112,10 +112,10 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimerâ
     - Custom shell around igv.js: clear track headers, pinned overview strip, smooth in/out transitions on region change, mobile-friendly controls; user can toggle tracks (genes/variants/scores) and see animated highlight when selecting a feature
 
 ## EPIC 5 â€” Literature + Research direction
-- [ ] T5.1 PubMed provider (online mode only)
+- [x] T5.1 PubMed provider (online mode only)
   - Acceptance:
     - Top genes retrieve PubMed metadata; store pmid + title + year
-- [ ] T5.2 Offline fallback research-direction generator (template/rules)
+- [x] T5.2 Offline fallback research-direction generator (template/rules)
   - Acceptance:
     - Offline mode still produces hypotheses/experiments section
 - [ ] T5.3 Optional cloud LLM summarizer (must cite evidence bundle)
