@@ -11,8 +11,8 @@ def get_token(client: TestClient, email: str, password: str) -> str:
 
 VCF_CONTENT = b"""##fileformat=VCFv4.2
 #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
-chr1\t100\t.\tA\tG\t50\tPASS\t.
-chr1\t150\t.\tT\tC,A\t20\tq10\t.
+chr22\t910001\t.\tA\tG\t50\tPASS\t.
+chr22\t910051\t.\tT\tC,A\t20\tq10\t.
 """
 
 
@@ -21,6 +21,9 @@ def test_ingest_and_query(monkeypatch):
     monkeypatch.setenv("VARIANTS_USE_DB", "false")
     client = TestClient(app)
     token = get_token(client, "admin@example.com", "password")
+    before_stats = client.get("/variants/stats", headers={"Authorization": f"Bearer {token}"})
+    assert before_stats.status_code == 200
+    before_total = before_stats.json()["total_variants"]
 
     resp = client.post(
         "/variants/ingest",
@@ -32,7 +35,7 @@ def test_ingest_and_query(monkeypatch):
 
     query = client.get(
         "/variants",
-        params={"chr": "chr1", "start": 90, "end": 200},
+        params={"chr": "chr22", "start": 909900, "end": 910200},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert query.status_code == 200
@@ -40,4 +43,4 @@ def test_ingest_and_query(monkeypatch):
 
     stats = client.get("/variants/stats", headers={"Authorization": f"Bearer {token}"})
     assert stats.status_code == 200
-    assert stats.json()["total_variants"] == 3
+    assert stats.json()["total_variants"] == before_total + 3
