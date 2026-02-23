@@ -14,6 +14,7 @@ router = APIRouter(prefix="/runs", tags=["runs"])
 
 SCORING_VERSION = "evidence-v1"
 _RUNS: list[dict[str, Any]] = []
+_RUN_RESULTS: dict[str, dict[str, Any]] = {}
 
 
 def _sha256_json(payload: Any) -> str:
@@ -84,6 +85,7 @@ def run_evidence(
     start: int = Query(1),
     end: int = Query(250_000_000),
     top_n: int = Query(20, ge=1, le=200),
+    project_id: str | None = Query(default=None),
     user=Depends(current_user),
 ):
     params = {"chr": chr, "start": start, "end": end, "top_n": top_n}
@@ -107,6 +109,7 @@ def run_evidence(
         "run_id": run_id,
         "created_at": time.time(),
         "created_by": user["email"],
+        "project_id": project_id,
         "kind": "evidence_rank",
         "params": params,
         "input_hashes": input_hashes,
@@ -121,6 +124,7 @@ def run_evidence(
         },
     }
     _RUNS.append(run_record)
+    _RUN_RESULTS[run_id] = result
 
     return {
         "run": run_record,
@@ -142,4 +146,18 @@ def get_run(run_id: str, user=Depends(current_user)):
         if user["role"] == "admin" or run["created_by"] == user["email"]:
             return {"run": run}
         raise HTTPException(status_code=403, detail="Forbidden")
+    raise HTTPException(status_code=404, detail="Run not found")
+
+
+@router.get("/{run_id}/result")
+def get_run_result(run_id: str, user=Depends(current_user)):
+    for run in _RUNS:
+        if run["run_id"] != run_id:
+            continue
+        if user["role"] != "admin" and run["created_by"] != user["email"]:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        result = _RUN_RESULTS.get(run_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Run result not found")
+        return {"run_id": run_id, "result": result}
     raise HTTPException(status_code=404, detail="Run not found")

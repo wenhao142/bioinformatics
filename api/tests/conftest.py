@@ -28,6 +28,7 @@ def reset_in_memory_state(monkeypatch):
     literature._PUBMED_KEYS.clear()
     rbac.PROJECTS.clear()
     runs._RUNS.clear()
+    runs._RUN_RESULTS.clear()
     causal._CAUSAL_RUNS.clear()
     causal._CAUSAL_RESULTS.clear()
     audit._EVENTS.clear()

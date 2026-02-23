@@ -90,7 +90,7 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimerâ
 - [x] T3.4 Causal scoring pipeline (MVP, offline)
   - Acceptance:
     - Given uploaded VCF + optional expr/prot diff tables, API produces per-variant and per-gene scores (simple LD window + annotation weights); results saved per project/run and queryable via API/UI
-- [ ] T3.5 Report auto-generation
+- [x] T3.5 Report auto-generation
   - Acceptance:
     - `/report/{project_id}/{run_id}` returns Markdown/HTML summarizing top loci/genes, evidence tables, methods, and reproducibility metadata
 
@@ -118,7 +118,7 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimerâ
 - [x] T5.2 Offline fallback research-direction generator (template/rules)
   - Acceptance:
     - Offline mode still produces hypotheses/experiments section
-- [ ] T5.3 Optional cloud LLM summarizer (must cite evidence bundle)
+- [x] T5.3 Optional cloud LLM summarizer (must cite evidence bundle)
   - Acceptance:
     - Output contains citations list; no fabricated references
 

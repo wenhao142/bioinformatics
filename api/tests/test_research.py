@@ -2,6 +2,7 @@ import io
 
 from fastapi.testclient import TestClient
 
+from api import literature
 from api.main import app
 
 
@@ -67,3 +68,53 @@ def test_research_requires_gene_or_rankable_region():
     r = client.post("/research/directions", headers=headers, json={"top_n": 3})
     assert r.status_code == 400
     assert "No genes provided" in r.json()["detail"]
+
+
+def test_research_summary_offline_with_citations(monkeypatch):
+    monkeypatch.setenv("ENABLE_LLM_SUMMARY", "false")
+    client = TestClient(app)
+    headers = auth_header(client)
+    ingest_variants(client, headers)
+    literature._PUBMED_RECORDS.append(
+        {
+            "gene": "GENE1",
+            "pmid": "12345678",
+            "title": "Mock AD evidence for GENE1",
+            "year": 2024,
+            "source": "pubmed",
+        }
+    )
+
+    payload = {"disease": "Alzheimer disease", "chr": "chr1", "start": 1, "end": 1000, "top_n": 2}
+    response = client.post("/research/summary", headers=headers, json=payload)
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["mode"] == "offline-template"
+    assert body["inference_label"] == "inference"
+    assert len(body["citations"]) >= 2
+    assert all("id" in row and "source_type" in row for row in body["citations"])
+
+
+def test_research_summary_llm_filters_invalid_citations(monkeypatch):
+    monkeypatch.setenv("ENABLE_LLM_SUMMARY", "true")
+    monkeypatch.setenv("ONLINE_MODE", "true")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    client = TestClient(app)
+    headers = auth_header(client)
+    ingest_variants(client, headers)
+
+    from api import research
+
+    def _fake_llm(_prompt: str):
+        return {"summary": "LLM summary", "citations": ["C1", "C999", "C2"]}
+
+    monkeypatch.setattr(research, "_call_cloud_llm", _fake_llm)
+    payload = {"disease": "Alzheimer disease", "chr": "chr1", "start": 1, "end": 1000, "top_n": 2}
+    response = client.post("/research/summary", headers=headers, json=payload)
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["mode"] == "online-llm"
+    assert body["summary"] == "LLM summary"
+    assert body["citation_ids"] == ["C1", "C2"]

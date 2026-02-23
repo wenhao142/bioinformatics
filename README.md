@@ -129,4 +129,34 @@ docker compose -f infra/docker-compose.yml up -d --build web
 - UI entry point:
   - `http://localhost:13100/` has a **Causal Scoring (T3.4 MVP)** panel for authenticated runs and top-gene preview.
 
+## Report auto-generation (T3.5)
+- Endpoint: `GET /report/{project_id}/{run_id}`
+- Formats:
+  - Markdown (default): `GET /report/{project_id}/{run_id}`
+  - HTML: `GET /report/{project_id}/{run_id}?format=html`
+- Report includes:
+  - top genes
+  - evidence table (loci/variants)
+  - method/scoring label
+  - reproducibility metadata (`params`, `input_hashes`, `tool_versions`, `signature_hash`, `result_hash`)
+
+## Research summary with citations (T5.3)
+- Endpoint: `POST /research/summary`
+- Input supports either:
+  - explicit genes (`genes`)
+  - or ranked region (`chr`, `start`, `end`)
+- Output always contains:
+  - `summary`
+  - `citations` (structured citation list with source type + payload)
+  - `citation_ids`
+  - `inference_label`
+- Optional cloud mode (LLM):
+  - enable `ONLINE_MODE=true`
+  - enable `ENABLE_LLM_SUMMARY=true`
+  - set `OPENAI_API_KEY` (optional `OPENAI_MODEL`, default `gpt-4o-mini`)
+- Citation integrity guard:
+  - only citation IDs from the evidence bundle are accepted
+  - invalid/unknown IDs returned by model are filtered out
+  - if cloud call fails, API falls back to offline template summary
+
 # bioinformatics
