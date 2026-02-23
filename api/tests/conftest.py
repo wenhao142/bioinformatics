@@ -13,7 +13,7 @@ def reset_in_memory_state(monkeypatch):
     # Tests rely on deterministic in-memory state across modules.
     monkeypatch.setenv("VARIANTS_USE_DB", "false")
 
-    from api import audit, datasets, literature, omics, rbac, runs, variants
+    from api import audit, causal, datasets, literature, omics, rbac, runs, variants
 
     if hasattr(variants.STORE, "rows"):
         variants.STORE.rows.clear()
@@ -28,6 +28,8 @@ def reset_in_memory_state(monkeypatch):
     literature._PUBMED_KEYS.clear()
     rbac.PROJECTS.clear()
     runs._RUNS.clear()
+    causal._CAUSAL_RUNS.clear()
+    causal._CAUSAL_RESULTS.clear()
     audit._EVENTS.clear()
 
     if audit._STORE and hasattr(audit._STORE, "conn"):

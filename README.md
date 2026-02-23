@@ -86,4 +86,47 @@ tools/plink2/plink2 --vcf results/vcf/NA12878.ESR1.vcf.gz \
 # Transcriptome pipeline
 snakemake -s workflow/menopause_ad.smk --cores 4
 ```
+
+## Locus Explorer UI (Minimal Modern)
+- Route: `http://localhost:13100/locus/chr1%3A1-1000`
+- Design intent: flat, minimal, modern visual style for both web shell and embedded IGV.
+- Navigation model: native IGV navbar is hidden; page uses custom control row (locus input, Go, Zoom In/Out, Reset).
+- Hover behavior: no shadow effect on hover states (web controls and IGV controls use flat hover feedback).
+- IGV theme: light content surfaces with simplified borders and no popup shadow.
+- SNP score preview: pointer-follow tooltip chart with flat bars and no shadow.
+
+### Verify locally
+```bash
+docker compose -f infra/docker-compose.yml up -d --build web
+```
+- Open the locus page and move cursor over genes/tracks.
+- Confirm hover states do not add shadow.
+- Confirm controls remain readable on desktop and mobile widths.
+
+## Reproducible run metadata (T3.3)
+- Endpoint: `POST /runs/evidence?chr=chr:start-end&top_n=N`
+- Each run stores reproducibility fields:
+  - `params`
+  - `input_hashes` (variants region + omics table)
+  - `tool_versions` (python/fastapi/pydantic/pyjwt/scoring)
+  - `signature_hash` and `result_hash`
+  - `stable_with_previous` and `rerun_of`
+- Query run history:
+  - `GET /runs`
+  - `GET /runs/{run_id}`
+
+## Causal scoring pipeline (T3.4, offline MVP)
+- Main endpoint: `POST /causal/score?chr=chr:start-end&top_n=N&ld_window_bp=50000&project_id=...`
+- Output includes:
+  - `variant_scores` (per-variant score + LD proxy signal + annotation weight)
+  - `gene_scores` (per-gene aggregated score and ranking)
+- Run metadata persisted per run:
+  - `run_id`, `project_id`, `params`, `input_hashes`, `tool_versions`, `result_hash`, `stable_with_previous`
+- Query endpoints:
+  - `GET /causal/runs`
+  - `GET /causal/runs/{run_id}`
+  - `GET /causal/runs/{run_id}/result`
+- UI entry point:
+  - `http://localhost:13100/` has a **Causal Scoring (T3.4 MVP)** panel for authenticated runs and top-gene preview.
+
 # bioinformatics

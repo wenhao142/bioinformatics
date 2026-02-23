@@ -84,10 +84,10 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimerâ
 - [x] T3.2 Evidence join (omics + genomics) + rank aggregation
   - Acceptance:
     - Top genes/loci list generated with feature breakdown
-- [ ] T3.3 Run reproducibility metadata
+- [x] T3.3 Run reproducibility metadata
   - Acceptance:
     - Run stores params, tool versions, input hashes; rerun stable
-- [ ] T3.4 Causal scoring pipeline (MVP, offline)
+- [x] T3.4 Causal scoring pipeline (MVP, offline)
   - Acceptance:
     - Given uploaded VCF + optional expr/prot diff tables, API produces per-variant and per-gene scores (simple LD window + annotation weights); results saved per project/run and queryable via API/UI
 - [ ] T3.5 Report auto-generation
@@ -107,9 +107,9 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimerâ
 - [x] T4.x Host gene annotation track
   - Acceptance:
     - Genes track served from our own MinIO/S3 (or signed URL), not public igv.org; CORS configured and loads in `/locus/*`
-- [ ] T4.y IGV UI redesign
+- [x] T4.y IGV UI redesign
   - Acceptance:
-    - Custom shell around igv.js: clear track headers, pinned overview strip, smooth in/out transitions on region change, mobile-friendly controls; user can toggle tracks (genes/variants/scores) and see animated highlight when selecting a feature
+    - Custom shell around igv.js with minimalist modern style (flat color surfaces, no hover shadows), native IGV navbar replaced by custom locus/zoom controls, mobile-friendly controls, and clear track toggles (genes/variants)
 
 ## EPIC 5 â€” Literature + Research direction
 - [x] T5.1 PubMed provider (online mode only)
