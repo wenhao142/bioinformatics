@@ -159,4 +159,20 @@ docker compose -f infra/docker-compose.yml up -d --build web
   - invalid/unknown IDs returned by model are filtered out
   - if cloud call fails, API falls back to offline template summary
 
+## Plugin manifest registry (T6.1)
+- Register endpoint: `POST /plugins/register` (admin only)
+- List/query:
+  - `GET /plugins`
+  - `GET /plugins/{plugin_id}`
+- Manifest fields:
+  - `plugin_id`, `name`, `version`, `image`
+  - `input_schema`, `output_schema` (JSON schema-like objects)
+  - `resources` (`cpu_millicores`, `memory_mb`, `gpu`)
+  - `enabled`, `tags`, `description`
+- Validation rules (MVP):
+  - `version` uses semver-like format (`x.y.z`)
+  - `input_schema` and `output_schema` must be object schemas with non-empty `properties`
+  - `required` fields must reference existing properties
+  - duplicate `plugin_id` is rejected
+
 # bioinformatics

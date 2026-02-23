@@ -6,4 +6,10 @@ __all__ = [
     "variants",
     "omics",
     "evidence",
+    "plugins",
+    "runs",
+    "causal",
+    "report",
+    "literature",
+    "research",
 ]

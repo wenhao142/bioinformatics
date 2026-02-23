@@ -123,7 +123,7 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimerâ
     - Output contains citations list; no fabricated references
 
 ## EPIC 6 â€” Method Registry (plugins)
-- [ ] T6.1 Plugin manifest spec (input/output schema, version, resources)
+- [x] T6.1 Plugin manifest spec (input/output schema, version, resources)
   - Acceptance:
     - Register method via JSON; validate schema
 - [ ] T6.2 Plugin runner (Docker image execution)
