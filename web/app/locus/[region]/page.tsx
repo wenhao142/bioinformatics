@@ -72,12 +72,18 @@ const INITIAL_TRACK_STATE: TrackState = {
 };
 
 const SNP_HALF_WINDOW_BP = 60;
-const VARIANT_WINDOW_HALF_BP = 600;
+const VARIANT_WINDOW_HALF_BP = 1000;
+const VARIANT_WINDOW_STEP_BP = 25;
 
 type LocusRange = {
   chr: string;
   start: number;
   end: number;
+};
+
+type HoveredGeneContext = {
+  featureLocus: LocusRange;
+  hoverPos: number;
 };
 
 function toInt(value: string | number | null | undefined): number | null {
@@ -255,7 +261,7 @@ function closeStaleIgvPopups() {
   }
 }
 
-function extractHoveredGeneLocus(browser: any, event: MouseEvent): LocusRange | null {
+function extractHoveredGeneContext(browser: any, event: MouseEvent): HoveredGeneContext | null {
   const target = event.target;
   if (!(target instanceof Node)) {
     return null;
@@ -282,10 +288,40 @@ function extractHoveredGeneLocus(browser: any, event: MouseEvent): LocusRange | 
         }
         const popupData = trackView.track.popupData(clickState);
         const fields = normalizePopupData(popupData);
-        const locus = extractFeatureLocus(fields);
-        if (locus) {
-          return locus;
+        const featureLocus = extractFeatureLocus(fields);
+        const referenceFrame = clickState?.referenceFrame ?? viewport?.referenceFrame ?? browser?.referenceFrameList?.[0];
+        const frameChr = normalizeChromosome(referenceFrame?.chr);
+
+        let hoverPos =
+          toInt(clickState?.genomicLocation) ?? toInt(clickState?.genomicStart) ?? toInt(clickState?.bp);
+        if (
+          (!hoverPos || hoverPos < 1) &&
+          Number.isFinite(Number(referenceFrame?.start)) &&
+          Number.isFinite(Number(referenceFrame?.bpPerPixel))
+        ) {
+          const rect = viewportElement.getBoundingClientRect();
+          const offsetX = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+          const guessedPos = Math.round(Number(referenceFrame.start) + offsetX * Number(referenceFrame.bpPerPixel));
+          if (Number.isFinite(guessedPos) && guessedPos >= 1) {
+            hoverPos = guessedPos;
+          }
         }
+
+        const chr = frameChr ?? featureLocus?.chr ?? null;
+        if (!chr) {
+          continue;
+        }
+        const locus =
+          featureLocus !== null
+            ? { chr, start: featureLocus.start, end: featureLocus.end }
+            : hoverPos
+              ? { chr, start: hoverPos, end: hoverPos }
+              : null;
+        if (!locus) {
+          continue;
+        }
+        const center = hoverPos ?? Math.floor((locus.start + locus.end) / 2);
+        return { featureLocus: locus, hoverPos: center };
       } catch {
         // Ignore transient hover parsing errors from IGV internals.
         continue;
@@ -305,23 +341,323 @@ export default function LocusPage({ params }: { params: { region: string } }) {
   const viewerInitRef = useRef(0);
   const collapsingMultiLocusRef = useRef(false);
   const hoverWindowKeyRef = useRef('');
+  const hoverRequestSeqRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<{ track?: string; name?: string; pos?: string } | null>(
-    null,
-  );
-  const [showGenes, setShowGenes] = useState(true);
-  const [showVariants, setShowVariants] = useState(true);
-  const [showScores, setShowScores] = useState(true);
-  const trackUrl =
+  const [viewerReady, setViewerReady] = useState(false);
+  const [viewerClosed, setViewerClosed] = useState(false);
+  const [viewerExpanded, setViewerExpanded] = useState(false);
+  const [tracks, setTracks] = useState<TrackState>(INITIAL_TRACK_STATE);
+  const [evidenceCards, setEvidenceCards] = useState<EvidenceCard[]>([]);
+  const [currentLocus, setCurrentLocus] = useState('');
+  const [apiToken, setApiToken] = useState<string | null>(process.env.NEXT_PUBLIC_API_TOKEN || null);
+  const [authEmail, setAuthEmail] = useState('viewer@example.com');
+  const [authPassword, setAuthPassword] = useState('password');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [literatureRecords, setLiteratureRecords] = useState<LiteratureRecord[]>([]);
+  const [literatureLoading, setLiteratureLoading] = useState(false);
+  const [literatureError, setLiteratureError] = useState<string | null>(null);
+  const [variantWindowOpen, setVariantWindowOpen] = useState(false);
+  const [variantWindowLoading, setVariantWindowLoading] = useState(false);
+  const [variantWindowError, setVariantWindowError] = useState<string | null>(null);
+  const [variantWindowLabel, setVariantWindowLabel] = useState('');
+  const [variantWindowSnps, setVariantWindowSnps] = useState<VariantWindowSnp[]>([]);
+  const [variantWindowPos, setVariantWindowPos] = useState<TooltipPosition>({ x: 20, y: 20 });
+  const genesTrackUrl =
     process.env.NEXT_PUBLIC_GENE_TRACK_URL && process.env.NEXT_PUBLIC_GENE_TRACK_URL.trim().length > 0
       ? process.env.NEXT_PUBLIC_GENE_TRACK_URL
       : '/genes.sample.bed';
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:18000';
-  const apiToken = process.env.NEXT_PUBLIC_API_TOKEN;
-  const scoreTrack =
-    process.env.NEXT_PUBLIC_SCORE_TRACK_URL && process.env.NEXT_PUBLIC_SCORE_TRACK_URL.trim().length > 0
-      ? process.env.NEXT_PUBLIC_SCORE_TRACK_URL
-      : '/scores.sample.bed';
+  const decodedRegion = useMemo(() => decodeURIComponent(params.region), [params.region]);
+  const { chr, start, end } = useMemo(() => parseRegion(decodedRegion), [decodedRegion]);
+  const [navLocusInput, setNavLocusInput] = useState(decodedRegion);
+
+  useEffect(() => {
+    setCurrentLocus(decodedRegion);
+    setNavLocusInput(decodedRegion);
+  }, [decodedRegion]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    if (apiToken) {
+      return;
+    }
+    const localToken = window.localStorage.getItem('ad_api_token');
+    if (localToken) {
+      setApiToken(localToken);
+    }
+  }, [apiToken]);
+
+  useEffect(() => {
+    if (!currentLocus) {
+      return;
+    }
+    setNavLocusInput(currentLocus);
+  }, [currentLocus]);
+
+  const goToLocus = useCallback(
+    async (rawLocus?: string) => {
+      const browser = browserRef.current;
+      if (!browser) {
+        return;
+      }
+      const locus = (rawLocus ?? navLocusInput).trim();
+      if (!locus) {
+        return;
+      }
+      try {
+        if (typeof browser.search === 'function') {
+          await browser.search(locus);
+        }
+        setError(null);
+      } catch (e: any) {
+        setError(e?.message || 'Failed to navigate locus');
+      }
+    },
+    [navLocusInput]
+  );
+
+  const zoomBy = useCallback(async (factor: number) => {
+    const browser = browserRef.current;
+    if (!browser) {
+      return;
+    }
+    const locus = getBrowserLocus(browser);
+    if (!locus) {
+      return;
+    }
+    const span = Math.max(2, locus.end - locus.start + 1);
+    const nextSpan = Math.max(2, Math.floor(span * factor));
+    const center = Math.floor((locus.start + locus.end) / 2);
+    const nextStart = Math.max(1, center - Math.floor(nextSpan / 2));
+    const nextEnd = Math.max(nextStart + 1, nextStart + nextSpan - 1);
+    try {
+      if (typeof browser.goto === 'function') {
+        await browser.goto(locus.chr, nextStart, nextEnd);
+      } else if (typeof browser.search === 'function') {
+        await browser.search(`${locus.chr}:${nextStart}-${nextEnd}`);
+      }
+      setError(null);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to zoom');
+    }
+  }, []);
+
+  const invalidateToken = useCallback((reason?: string) => {
+    setApiToken(null);
+    if (reason) {
+      setAuthError(reason);
+    }
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem('ad_api_token');
+    }
+  }, []);
+
+  const handleLogin = async () => {
+    try {
+      setAuthError(null);
+      setAuthLoading(true);
+      const response = await fetch(`${apiUrl}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: authEmail, password: authPassword }),
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || 'Login failed');
+      }
+      const payload: LoginResponse = await response.json();
+      setApiToken(payload.access_token);
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem('ad_api_token', payload.access_token);
+      }
+    } catch (e: any) {
+      setAuthError(e?.message || 'Login failed');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const clearToken = () => {
+    setAuthError(null);
+    invalidateToken();
+  };
+
+  const hideVariantWindow = useCallback(() => {
+    hoverRequestSeqRef.current += 1;
+    setVariantWindowOpen(false);
+    setVariantWindowLoading(false);
+    setVariantWindowError(null);
+    hoverWindowKeyRef.current = '';
+  }, []);
+
+  const loadVariantWindow = useCallback(
+    async (target: LocusRange, centerOverride?: number) => {
+      if (!apiToken) {
+        setAuthError('Variants window needs login token.');
+        return;
+      }
+      const requestSeq = hoverRequestSeqRef.current + 1;
+      hoverRequestSeqRef.current = requestSeq;
+      const center = centerOverride ?? Math.floor((target.start + target.end) / 2);
+      const startBp = Math.max(1, center - VARIANT_WINDOW_HALF_BP);
+      const endBp = Math.max(startBp + 1, center + VARIANT_WINDOW_HALF_BP);
+
+      setVariantWindowOpen(true);
+      setVariantWindowLoading(true);
+      setVariantWindowError(null);
+      setVariantWindowLabel(`${target.chr}:${startBp}-${endBp} (hover ${center} bp)`);
+
+      try {
+        const response = await fetch(
+          `${apiUrl}/variants?chr=${encodeURIComponent(target.chr)}&start=${startBp}&end=${endBp}`,
+          {
+            headers: {
+              Authorization: `Bearer ${apiToken}`,
+            },
+          }
+        );
+        if (requestSeq !== hoverRequestSeqRef.current) {
+          return;
+        }
+        if (response.status === 401) {
+          invalidateToken('Token expired or invalid. Please sign in again.');
+          setVariantWindowError('Token expired. Please sign in again.');
+          setVariantWindowSnps([]);
+          return;
+        }
+        if (!response.ok) {
+          throw new Error(`Failed to load variants (${response.status})`);
+        }
+        const payload = await response.json().catch(() => ({}));
+        if (requestSeq !== hoverRequestSeqRef.current) {
+          return;
+        }
+        const rows = Array.isArray(payload?.variants) ? payload.variants : [];
+        const snps: VariantWindowSnp[] = rows
+          .map((row: any, index: number) => {
+            const pos = Number(row?.pos);
+            if (!Number.isFinite(pos)) {
+              return null;
+            }
+            const score = Number(row?.qual);
+            return {
+              id: `${row?.chr || target.chr}-${pos}-${row?.ref || 'N'}-${row?.alt || 'N'}-${index}`,
+              chr: String(row?.chr || target.chr),
+              pos,
+              ref: String(row?.ref || 'N'),
+              alt: String(row?.alt || 'N'),
+              score: Number.isFinite(score) ? score : 0,
+              filter: String(row?.filter || 'NA'),
+            };
+          })
+          .filter(Boolean) as VariantWindowSnp[];
+        snps.sort((a, b) => a.pos - b.pos);
+        setVariantWindowSnps(snps);
+        if (snps.length === 0) {
+          setVariantWindowError('No SNPs found in this sliding window.');
+        }
+      } catch (e: any) {
+        if (requestSeq !== hoverRequestSeqRef.current) {
+          return;
+        }
+        setVariantWindowSnps([]);
+        setVariantWindowError(e?.message || 'Failed to load SNP window');
+      } finally {
+        if (requestSeq === hoverRequestSeqRef.current) {
+          setVariantWindowLoading(false);
+        }
+      }
+    },
+    [apiToken, apiUrl, invalidateToken]
+  );
+
+  useEffect(() => {
+    if (!viewerExpanded) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setViewerExpanded(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [viewerExpanded]);
+
+  useEffect(() => {
+    if (!apiToken) {
+      return;
+    }
+    let cancelled = false;
+
+    const verifyToken = async () => {
+      try {
+        const probeEnd = Math.min(end, start + 1000);
+        const response = await fetch(
+          `${apiUrl}/variants/bed?chr=${encodeURIComponent(chr)}&start=${start}&end=${probeEnd}&token=${encodeURIComponent(apiToken)}`,
+          {
+            headers: {
+              Authorization: `Bearer ${apiToken}`,
+            },
+          }
+        );
+        if (cancelled) {
+          return;
+        }
+        if (response.status === 401) {
+          invalidateToken('Token expired or invalid. Please sign in again.');
+          setError(null);
+          return;
+        }
+        if (!response.ok) {
+          setError(`Variants authorization check failed (${response.status}).`);
+          return;
+        }
+        setAuthError(null);
+      } catch (e: any) {
+        if (!cancelled) {
+          setError(e?.message || 'Failed to verify API token');
+        }
+      }
+    };
+
+    void verifyToken();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiToken, apiUrl, chr, end, invalidateToken, start]);
+
+  const selectedGene = useMemo(() => {
+    const card = evidenceCards[0];
+    if (!card) {
+      return null;
+    }
+    const gene =
+      pickFieldValue(card.fields, ['gene', 'gene_name', 'symbol']) ??
+      (card.trackName === TRACK_NAMES.genes ? pickFieldValue(card.fields, ['name']) : null);
+    if (!gene) {
+      return null;
+    }
+    const trimmed = gene.trim();
+    if (!trimmed || !/^[A-Za-z0-9._-]+$/.test(trimmed)) {
+      return null;
+    }
+    return trimmed;
+  }, [evidenceCards]);
+
+  const variantScoreMax = useMemo(() => {
+    let max = 0;
+    for (const row of variantWindowSnps) {
+      if (row.score > max) {
+        max = row.score;
+      }
+    }
+    return max > 0 ? max : 1;
+  }, [variantWindowSnps]);
 
   useEffect(() => {
     if (!selectedGene) {
@@ -435,51 +771,12 @@ export default function LocusPage({ params }: { params: { region: string } }) {
 
         const mod = await import('igv/dist/igv.esm'); // ESM build exposes createBrowser
         const igv = (mod as any).default ?? mod;
-        const decoded = decodeURIComponent(params.region);
-        const { chr, start, end } = parseRegion(decoded);
-        const tracks: any[] = [];
-        if (showGenes) {
-          tracks.push({
-            name: 'Genes',
-            type: 'annotation',
-            format: 'bed',
-            url: trackUrl,
-          });
-        }
-        if (showVariants) {
-          tracks.push({
-            name: 'Variants',
-            type: 'annotation',
-            format: 'bed',
-            url: `${apiUrl}/variants/bed?chr=${chr}&start=${start}&end=${end}${
-              apiToken ? `&token=${apiToken}` : ''
-            }`,
-            headers: apiToken ? { Authorization: `Bearer ${apiToken}` } : undefined,
-          });
-        }
-        if (showScores) {
-          tracks.push({
-            name: 'Scores',
-            type: 'annotation',
-            format: 'bed',
-            url: scoreTrack,
-            color: '#ef4444',
-          });
-        }
-
-        browser = await igv.createBrowser(containerRef.current as HTMLDivElement, {
+        const browser = await igv.createBrowser(mountEl as HTMLDivElement, {
           genome: 'hg38',
           locus: `${chr}:${start}-${end}`,
-          tracks,
-        });
-
-        browser.on('trackclick', (_t: any, pop: any) => {
-          if (!pop || !pop.name) return;
-          setSelected({
-            track: pop.track || 'track',
-            name: pop.name,
-            pos: pop.locus || '',
-          });
+          showNavigation: false,
+          showIdeogram: false,
+          tracks: [],
         });
         if (cancelled || initId !== viewerInitRef.current) {
           browser.dispose();
@@ -620,6 +917,7 @@ export default function LocusPage({ params }: { params: { region: string } }) {
     const containerEl = containerRef.current;
     let cancelled = false;
     let lastHoverAt = 0;
+    let lastWheelAt = 0;
 
     const placeVariantWindow = (event: MouseEvent) => {
       const tooltipWidth = Math.min(560, Math.max(340, Math.floor(window.innerWidth * 0.42)));
@@ -646,34 +944,51 @@ export default function LocusPage({ params }: { params: { region: string } }) {
       }
       lastHoverAt = now;
 
-      const locus = extractHoveredGeneLocus(browser, event);
-      if (!locus) {
+      const hovered = extractHoveredGeneContext(browser, event);
+      if (!hovered) {
         hideVariantWindow();
         return;
       }
       placeVariantWindow(event);
-      const center = Math.floor((locus.start + locus.end) / 2);
-      const key = `${locus.chr}:${center}`;
+      const center = Math.max(1, Math.round(hovered.hoverPos));
+      const snappedCenter = Math.max(1, Math.round(center / VARIANT_WINDOW_STEP_BP) * VARIANT_WINDOW_STEP_BP);
+      const key = `${hovered.featureLocus.chr}:${snappedCenter}`;
       if (hoverWindowKeyRef.current === key) {
         setVariantWindowOpen(true);
         return;
       }
       hoverWindowKeyRef.current = key;
-      void loadVariantWindow(locus);
+      void loadVariantWindow(hovered.featureLocus, snappedCenter);
     };
 
     const onMouseLeave = () => {
       hideVariantWindow();
     };
 
+    const onWheel = (event: WheelEvent) => {
+      if (cancelled || browserRef.current !== browser) {
+        return;
+      }
+      event.preventDefault();
+      const now = Date.now();
+      if (now - lastWheelAt < 90) {
+        return;
+      }
+      lastWheelAt = now;
+      const factor = event.deltaY > 0 ? 1.8 : 0.55;
+      void zoomBy(factor);
+    };
+
     containerEl.addEventListener('mousemove', onMouseMove);
     containerEl.addEventListener('mouseleave', onMouseLeave);
+    containerEl.addEventListener('wheel', onWheel, { passive: false });
     return () => {
       cancelled = true;
       containerEl.removeEventListener('mousemove', onMouseMove);
       containerEl.removeEventListener('mouseleave', onMouseLeave);
+      containerEl.removeEventListener('wheel', onWheel);
     };
-  }, [hideVariantWindow, loadVariantWindow, viewerClosed, viewerReady]);
+  }, [hideVariantWindow, loadVariantWindow, viewerClosed, viewerReady, zoomBy]);
 
   useEffect(() => {
     if (!viewerReady || !browserRef.current) {
@@ -740,57 +1055,240 @@ export default function LocusPage({ params }: { params: { region: string } }) {
     return () => {
       cancelled = true;
     };
-  }, [params.region, trackUrl, apiUrl, apiToken, scoreTrack, showGenes, showVariants, showScores]);
+  }, [apiToken, apiUrl, chr, end, genesTrackUrl, invalidateToken, start, tracks, viewerReady]);
 
   return (
-    <main className="min-h-screen p-6 space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Locus Explorer</h1>
-          <p className="text-sm text-gray-600">Region: {decodeURIComponent(params.region)}</p>
-        </div>
-        <div className="flex items-center gap-2 text-sm">
-          <label className="flex items-center gap-1">
-            <input type="checkbox" checked={showGenes} onChange={() => setShowGenes(!showGenes)} />
-            Genes
-          </label>
-          <label className="flex items-center gap-1">
+    <main className="locus-page">
+      <h1 className="page-title">Locus Explorer</h1>
+      <p className="region-line">Region: {decodedRegion}</p>
+      <section className="auth-bar">
+        {apiToken ? (
+          <>
+            <p className="auth-ok">API token loaded. Variants track is enabled.</p>
+            <button type="button" className="auth-clear" onClick={clearToken}>
+              Clear Token
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="auth-warn">Variants track needs login token.</p>
+            <input
+              className="auth-input"
+              value={authEmail}
+              onChange={(event) => setAuthEmail(event.target.value)}
+              placeholder="email"
+            />
+            <input
+              className="auth-input"
+              type="password"
+              value={authPassword}
+              onChange={(event) => setAuthPassword(event.target.value)}
+              placeholder="password"
+            />
+            <button type="button" className="auth-login" onClick={handleLogin} disabled={authLoading}>
+              {authLoading ? 'Signing In...' : 'Sign In'}
+            </button>
+            {authError ? <span className="auth-error">{authError}</span> : null}
+          </>
+        )}
+      </section>
+      <section className="toggle-bar">
+        {TRACK_ORDER.map((key) => (
+          <label key={key} className="toggle-item">
             <input
               type="checkbox"
-              checked={showVariants}
-              onChange={() => setShowVariants(!showVariants)}
+              checked={tracks[key]}
+              disabled={key === 'variants' && !apiToken}
+              onChange={(event) => {
+                const checked = event.target.checked;
+                setTracks((prev) => ({ ...prev, [key]: checked }));
+              }}
             />
-            Variants
+            <span>{TRACK_NAMES[key]}</span>
           </label>
-          <label className="flex items-center gap-1">
-            <input type="checkbox" checked={showScores} onChange={() => setShowScores(!showScores)} />
-            Scores
-          </label>
+        ))}
+      </section>
+      <section className="viewer-toolbar">
+        <div className="viewer-nav">
+          <input
+            className="viewer-locus-input"
+            value={navLocusInput}
+            onChange={(event) => setNavLocusInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                void goToLocus();
+              }
+            }}
+            placeholder="chr:start-end"
+            disabled={viewerClosed || !viewerReady}
+          />
+          <button
+            type="button"
+            className="viewer-nav-btn"
+            onClick={() => void goToLocus()}
+            disabled={viewerClosed || !viewerReady}
+          >
+            Go
+          </button>
+          <button
+            type="button"
+            className="viewer-nav-btn"
+            onClick={() => void zoomBy(2)}
+            disabled={viewerClosed || !viewerReady}
+          >
+            Zoom Out
+          </button>
+          <button
+            type="button"
+            className="viewer-nav-btn"
+            onClick={() => void zoomBy(0.5)}
+            disabled={viewerClosed || !viewerReady}
+          >
+            Zoom In
+          </button>
+          <button
+            type="button"
+            className="viewer-nav-btn"
+            onClick={() => void goToLocus(decodedRegion)}
+            disabled={viewerClosed || !viewerReady}
+          >
+            Reset
+          </button>
         </div>
-      </div>
-
+        <div className="viewer-toolbar-actions">
+          <button
+            type="button"
+            className="viewer-toggle"
+            onClick={() => {
+              setError(null);
+              setViewerClosed((prev) => !prev);
+              if (!viewerClosed) {
+                setViewerExpanded(false);
+              }
+            }}
+          >
+            {viewerClosed ? 'Open IGV' : 'Close IGV'}
+          </button>
+          {!viewerClosed ? (
+            <button
+              type="button"
+              className="viewer-expand"
+              onClick={() => setViewerExpanded((prev) => !prev)}
+            >
+              {viewerExpanded ? 'Restore Size' : 'Expand Viewer'}
+            </button>
+          ) : null}
+        </div>
+      </section>
       {error ? (
         <div className="error">{error}</div>
       ) : (
-        <div className="grid md:grid-cols-[3fr,1fr] gap-4">
-          <div
-            ref={containerRef}
-            className="border rounded shadow-sm"
-            style={{ minHeight: 520 }}
-          />
-          <div className="border rounded p-3 bg-gray-50 min-h-[120px]">
-            <div className="text-sm font-semibold mb-2">Feature</div>
-            {selected ? (
-              <div className="space-y-1 text-sm">
-                <div className="text-gray-700">{selected.name}</div>
-                {selected.pos && <div className="text-gray-500">{selected.pos}</div>}
-                {selected.track && <div className="text-gray-500">Track: {selected.track}</div>}
+        <section className={`viewer-grid ${viewerExpanded ? 'viewer-grid-expanded' : ''}`}>
+          {viewerExpanded ? (
+            <button type="button" className="viewer-overlay-close" onClick={() => setViewerExpanded(false)}>
+              Exit Fullscreen
+            </button>
+          ) : null}
+          {viewerClosed ? (
+            <div className="viewer viewer-closed">
+              <p>IGV viewer is closed.</p>
+              <button type="button" className="viewer-reopen" onClick={() => setViewerClosed(false)}>
+                Reopen IGV
+              </button>
+            </div>
+          ) : (
+            <div ref={containerRef} className="viewer" />
+          )}
+          <aside className="evidence">
+            <div className="evidence-head">
+              <div>
+                <h2>Feature Detail</h2>
+                <p className="evidence-focus">Focus: {currentLocus || decodedRegion}</p>
               </div>
+              {evidenceCards.length > 0 ? (
+                <button type="button" className="evidence-clear" onClick={() => setEvidenceCards([])}>
+                  Clear Selection
+                </button>
+              ) : null}
+            </div>
+            {evidenceCards.length === 0 ? (
+              <p className="placeholder">
+                Hover on a gene/variant in IGV to see quick info, then click to pin REF/ALT and locus details here.
+              </p>
             ) : (
-              <div className="text-sm text-gray-500">Click a feature to see details</div>
+              <div className="evidence-list">
+                {evidenceCards.map((card) => (
+                  <article key={card.id} className="evidence-card">
+                    <div className="evidence-meta">
+                      <div className={`evidence-pill ${card.sourceKind === 'source' ? 'pill-source' : 'pill-infer'}`}>
+                        {card.sourceLabel}
+                      </div>
+                      <p>
+                        <strong>Track:</strong> {card.trackName}
+                      </p>
+                      <p>
+                        <strong>Type:</strong> {card.sourceKind}
+                      </p>
+                      <p>
+                        <strong>Source:</strong> {card.source}
+                      </p>
+                      <p>
+                        <strong>Captured:</strong> {new Date(card.createdAt).toLocaleString()}
+                      </p>
+                      {card.zoomLocus ? (
+                        <p>
+                          <strong>Zoom:</strong> {card.zoomLocus}
+                        </p>
+                      ) : null}
+                      <p>{card.note}</p>
+                    </div>
+                    <div className="evidence-fields">
+                      {card.fields.length === 0 ? (
+                        <p className="placeholder">No popup fields returned for this click.</p>
+                      ) : (
+                        card.fields.map((field, index) => (
+                          <div key={`${card.id}-${field.name}-${index}`} className="field-row">
+                            <span className="field-name">{field.name}</span>
+                            <span className="field-value">{field.value}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </article>
+                ))}
+                <section className="literature-card">
+                  <h3>PubMed</h3>
+                  <p className="literature-subtitle">
+                    Gene: <strong>{selectedGene ?? 'N/A'}</strong>
+                  </p>
+                  {literatureLoading ? (
+                    <p className="placeholder">Loading PubMed metadata...</p>
+                  ) : literatureError ? (
+                    <p className="literature-error">{literatureError}</p>
+                  ) : literatureRecords.length === 0 ? (
+                    <p className="placeholder">No linked PubMed records.</p>
+                  ) : (
+                    <div className="literature-list">
+                      {literatureRecords.map((record) => (
+                        <article key={`${record.gene}-${record.pmid}`} className="literature-item">
+                          <a
+                            href={`https://pubmed.ncbi.nlm.nih.gov/${record.pmid}/`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            PMID {record.pmid}
+                          </a>
+                          <p>{record.title}</p>
+                          <span>{record.year ?? 'Year unknown'}</span>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              </div>
             )}
-          </div>
-        </div>
+          </aside>
+        </section>
       )}
       {variantWindowOpen ? (
         <section
@@ -828,22 +1326,22 @@ export default function LocusPage({ params }: { params: { region: string } }) {
       ) : null}
       <style jsx>{`
         .locus-page {
-          --paper: #eef4f4;
-          --paper-soft: #f8fcfc;
-          --ink: #142328;
-          --ink-muted: #3d565d;
+          --paper: #f4f6f8;
+          --paper-soft: #ffffff;
+          --ink: #0f172a;
+          --ink-muted: #475569;
           --panel: #ffffff;
-          --line: #9fb8bf;
-          --accent: #cc4a2d;
-          --accent-soft: #ef8c4b;
-          --deep: #0f3f4d;
+          --line: #d2dae4;
+          --accent: #0f6cbd;
+          --accent-soft: #6ea8dc;
+          --deep: #1e293b;
           min-height: 100vh;
           padding: 28px;
           font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif;
           font-size: 14pt;
           line-height: 1.35;
           color: var(--ink);
-          background: #e6f0f2;
+          background: #f4f6f8;
           animation: pageIn 360ms ease-out;
           overflow-x: hidden;
         }
@@ -852,23 +1350,21 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         }
         .page-title {
           margin: 0 0 4px;
-          font-family: 'IBM Plex Serif', Georgia, serif;
-          font-size: clamp(40px, 4.8vw, 58px);
+          font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif;
+          font-size: clamp(30px, 3.6vw, 44px);
           line-height: 1.15;
           letter-spacing: 0.01em;
-          color: #163641;
-          text-shadow: 0 1px 0 #fff;
+          color: #0f172a;
         }
         .region-line {
           margin: 0 0 18px;
           display: inline-block;
           padding: 12px 18px;
           border: 1px solid var(--line);
-          border-radius: 999px;
+          border-radius: 10px;
           font-weight: 700;
           color: var(--ink-muted);
-          background: rgba(250, 255, 255, 0.9);
-          backdrop-filter: blur(2px);
+          background: #ffffff;
         }
         .toggle-bar {
           display: flex;
@@ -877,16 +1373,47 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           margin-bottom: 16px;
           padding: 14px;
           border: 1px solid var(--line);
-          border-radius: 14px;
-          background: #f8efdc;
-          box-shadow:
-            0 8px 24px rgba(44, 63, 52, 0.08),
-            inset 0 1px 0 rgba(255, 255, 255, 0.7);
+          border-radius: 12px;
+          background: #ffffff;
         }
         .viewer-toolbar {
           display: flex;
-          justify-content: flex-end;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
           margin-bottom: 12px;
+        }
+        .viewer-nav {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .viewer-locus-input {
+          min-height: 46px;
+          min-width: min(420px, 70vw);
+          border-radius: 10px;
+          border: 1px solid #cbd5e1;
+          background: #ffffff;
+          color: #0f172a;
+          padding: 8px 12px;
+        }
+        .viewer-nav-btn {
+          min-height: 46px;
+          border-radius: 10px;
+          border: 1px solid #cbd5e1;
+          background: #ffffff;
+          color: #0f172a;
+          padding: 8px 12px;
+          font-weight: 700;
+          letter-spacing: 0.02em;
+          text-transform: uppercase;
+          cursor: pointer;
+        }
+        .viewer-nav-btn:disabled {
+          opacity: 0.55;
+          cursor: default;
         }
         .viewer-toolbar-actions {
           display: flex;
@@ -898,22 +1425,24 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         .viewer-expand {
           min-height: 56px;
           border-radius: 10px;
-          border: 1px solid #2f4a3a;
-          background: #2f4a3a;
-          color: #fff6e8;
+          border: 1px solid #c7d2e1;
+          background: #ffffff;
+          color: #0f172a;
           font-weight: 700;
-          letter-spacing: 0.05em;
+          letter-spacing: 0.02em;
           text-transform: uppercase;
           padding: 8px 16px;
           cursor: pointer;
         }
         .viewer-reopen {
-          background: #b84f28;
-          border-color: #b84f28;
+          background: #0f6cbd;
+          border-color: #0f6cbd;
+          color: #ffffff;
         }
         .viewer-expand {
-          background: #0f3f4d;
-          border-color: #0f3f4d;
+          background: #1e293b;
+          border-color: #1e293b;
+          color: #ffffff;
         }
         .auth-bar {
           display: flex;
@@ -922,9 +1451,9 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           flex-wrap: wrap;
           margin-bottom: 12px;
           padding: 10px;
-          border: 1px solid #ccb891;
+          border: 1px solid #d2dae4;
           border-radius: 12px;
-          background: #fff8e8;
+          background: #ffffff;
         }
         .auth-ok,
         .auth-warn {
@@ -935,33 +1464,33 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           text-transform: uppercase;
         }
         .auth-ok {
-          color: #234031;
+          color: #14532d;
         }
         .auth-warn {
-          color: #8a3f20;
+          color: #9a3412;
         }
         .auth-input {
           min-height: 56px;
           min-width: 150px;
-          border: 1px solid #c9b284;
+          border: 1px solid #cbd5e1;
           border-radius: 8px;
           padding: 8px 12px;
-          background: #fffcf5;
-          color: #213329;
+          background: #ffffff;
+          color: #0f172a;
         }
         .auth-input:focus {
-          outline: 2px solid #e98e4d;
+          outline: 2px solid #0f6cbd;
           outline-offset: 1px;
         }
         .auth-login,
         .auth-clear {
           min-height: 56px;
           border-radius: 8px;
-          border: 1px solid #b84f28;
-          background: #b84f28;
-          color: #fff6e8;
+          border: 1px solid #0f6cbd;
+          background: #0f6cbd;
+          color: #ffffff;
           font-weight: 700;
-          letter-spacing: 0.04em;
+          letter-spacing: 0.02em;
           text-transform: uppercase;
           padding: 8px 14px;
           cursor: pointer;
@@ -971,8 +1500,8 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           cursor: default;
         }
         .auth-clear {
-          background: #234031;
-          border-color: #234031;
+          background: #1e293b;
+          border-color: #1e293b;
         }
         .auth-error {
           color: #9a2b23;
@@ -986,34 +1515,33 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           font-weight: 700;
           text-transform: uppercase;
           letter-spacing: 0.06em;
-          color: #2f4035;
-          border: 1px solid #c6b48d;
+          color: #1e293b;
+          border: 1px solid #d2dae4;
           border-radius: 999px;
           padding: 10px 16px;
-          background: #fff9ec;
-          transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+          background: #ffffff;
+          transition: border-color 160ms ease, background-color 160ms ease;
         }
         .toggle-item input:disabled {
           opacity: 0.5;
         }
         .toggle-item:hover {
-          transform: translateY(-1px);
-          border-color: #bb6b3e;
-          box-shadow: 0 4px 14px rgba(184, 79, 40, 0.18);
+          border-color: #0f6cbd;
+          background: #f8fbff;
         }
         .toggle-item input {
           width: 24px;
           height: 24px;
-          accent-color: #b84f28;
+          accent-color: #0f6cbd;
         }
         .error {
           color: #7f1d1d;
           font-size: 14px;
           font-weight: 700;
           padding: 12px 14px;
-          border: 2px solid #d57a51;
+          border: 1px solid #fda4af;
           border-radius: 10px;
-          background: #fceadf;
+          background: #fff1f2;
         }
         .viewer-grid {
           display: grid;
@@ -1026,13 +1554,11 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           position: fixed;
           inset: 10px;
           z-index: 120;
-          background: rgba(238, 244, 244, 0.98);
-          border: 2px solid #9fb8bf;
+          background: rgba(244, 246, 248, 0.99);
+          border: 1px solid #d2dae4;
           border-radius: 16px;
           padding: 12px;
           grid-template-columns: 1fr;
-          box-shadow: 0 24px 64px rgba(11, 31, 37, 0.35);
-          backdrop-filter: blur(3px);
           overflow: auto;
         }
         .viewer-overlay-close {
@@ -1042,8 +1568,8 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           z-index: 2;
           min-height: 44px;
           border-radius: 8px;
-          border: 1px solid #0f3f4d;
-          background: #0f3f4d;
+          border: 1px solid #1e293b;
+          background: #1e293b;
           color: #ffffff;
           padding: 6px 12px;
           cursor: pointer;
@@ -1056,12 +1582,9 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         }
         .viewer {
           min-height: 560px;
-          border: 2px solid #cbb78c;
-          border-radius: 18px;
+          border: 1px solid #d2dae4;
+          border-radius: 12px;
           background: var(--panel);
-          box-shadow:
-            0 16px 34px rgba(26, 45, 34, 0.14),
-            inset 0 0 0 1px rgba(255, 255, 255, 0.7);
           overflow: hidden;
         }
         .viewer-closed {
@@ -1079,13 +1602,10 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           letter-spacing: 0.02em;
         }
         .evidence {
-          border: 2px solid #cbb78c;
-          border-radius: 18px;
+          border: 1px solid #d2dae4;
+          border-radius: 12px;
           background: var(--panel);
           padding: 16px;
-          box-shadow:
-            0 16px 34px rgba(26, 45, 34, 0.14),
-            inset 0 0 0 1px rgba(255, 255, 255, 0.7);
           min-height: 560px;
           display: flex;
           flex-direction: column;
@@ -1101,9 +1621,9 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         .evidence-clear {
           min-height: 52px;
           border-radius: 8px;
-          border: 1px solid #9a3f21;
-          background: #9a3f21;
-          color: #fff6e8;
+          border: 1px solid #1e293b;
+          background: #1e293b;
+          color: #ffffff;
           padding: 8px 14px;
           font-weight: 700;
           letter-spacing: 0.04em;
@@ -1112,14 +1632,14 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         }
         .evidence h2 {
           margin: 0;
-          font-family: 'Palatino Linotype', 'Book Antiqua', Georgia, serif;
+          font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif;
           font-size: 22px;
           color: var(--deep);
         }
         .evidence-focus {
           margin: 4px 0 0;
           font-size: 12px;
-          color: #5f6f64;
+          color: #64748b;
           font-weight: 700;
           letter-spacing: 0.03em;
         }
@@ -1137,30 +1657,29 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           width: 10px;
         }
         .evidence-list::-webkit-scrollbar-track {
-          background: #f3e7cd;
+          background: #eef2f7;
           border-radius: 999px;
         }
         .evidence-list::-webkit-scrollbar-thumb {
-          background: #b56b3d;
+          background: #94a3b8;
           border-radius: 999px;
-          border: 2px solid #f3e7cd;
+          border: 2px solid #eef2f7;
         }
         .evidence-list::-webkit-scrollbar-thumb:hover {
-          background: #934f27;
+          background: #64748b;
         }
         .evidence-card {
-          border: 1px solid #d8c59d;
+          border: 1px solid #dbe2ea;
           border-radius: 12px;
-          background: #fffdf7;
+          background: #ffffff;
           padding: 10px;
-          box-shadow: 0 3px 12px rgba(32, 47, 38, 0.08);
         }
         .evidence-meta {
           margin-bottom: 14px;
           padding: 12px;
-          background: #f8f3e7;
+          background: #f8fafc;
           border-radius: 10px;
-          border: 1px solid #dbcaa6;
+          border: 1px solid #dbe2ea;
           font-size: 13px;
         }
         .evidence-pill {
@@ -1176,14 +1695,14 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           border: 1px solid transparent;
         }
         .pill-source {
-          background: #e8f5ec;
-          color: #1f5a35;
-          border-color: #84c69b;
+          background: #e0f2fe;
+          color: #0c4a6e;
+          border-color: #93c5fd;
         }
         .pill-infer {
-          background: #fff0e2;
-          color: #8a3f20;
-          border-color: #e5a676;
+          background: #eef2ff;
+          color: #3730a3;
+          border-color: #c7d2fe;
         }
         .evidence-meta p {
           margin: 0 0 6px;
@@ -1198,16 +1717,15 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           gap: 10px;
         }
         .field-row {
-          border: 1px solid #d8c59d;
+          border: 1px solid #dbe2ea;
           border-radius: 10px;
           padding: 10px;
-          background: #fffcf4;
-          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+          background: #ffffff;
         }
         .field-name {
           display: block;
           font-size: 11px;
-          color: #6c7a70;
+          color: #64748b;
           margin-bottom: 5px;
           text-transform: uppercase;
           letter-spacing: 0.07em;
@@ -1216,19 +1734,19 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         .field-value {
           display: block;
           font-size: 13px;
-          color: #18261f;
+          color: #0f172a;
           overflow-wrap: anywhere;
         }
         .placeholder {
           margin: 0;
-          color: #5f6f64;
+          color: #64748b;
           font-size: 13px;
           line-height: 1.5;
         }
         .literature-card {
-          border: 1px solid #cdb792;
+          border: 1px solid #dbe2ea;
           border-radius: 12px;
-          background: #fef7e7;
+          background: #ffffff;
           padding: 12px;
         }
         .literature-card h3 {
@@ -1237,12 +1755,12 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           font-weight: 800;
           letter-spacing: 0.04em;
           text-transform: uppercase;
-          color: #2c4638;
+          color: #1e293b;
         }
         .literature-subtitle {
           margin: 0 0 10px;
           font-size: 12px;
-          color: #4a5c52;
+          color: #64748b;
         }
         .literature-list {
           display: flex;
@@ -1250,13 +1768,13 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           gap: 10px;
         }
         .literature-item {
-          border: 1px solid #d8c59d;
+          border: 1px solid #dbe2ea;
           border-radius: 10px;
           padding: 10px;
-          background: #fffdf8;
+          background: #ffffff;
         }
         .literature-item a {
-          color: #9a3f21;
+          color: #0f6cbd;
           font-size: 12px;
           font-weight: 700;
           text-decoration: none;
@@ -1267,12 +1785,12 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         .literature-item p {
           margin: 6px 0;
           font-size: 13px;
-          color: #18261f;
+          color: #0f172a;
           line-height: 1.4;
         }
         .literature-item span {
           font-size: 12px;
-          color: #5f6f64;
+          color: #64748b;
           font-weight: 700;
         }
         .literature-error {
@@ -1285,10 +1803,9 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           position: fixed;
           width: min(560px, calc(100vw - 20px));
           max-height: 290px;
-          border: 2px solid #8cb1ba;
-          border-radius: 16px;
-          background: #f7fcfd;
-          box-shadow: 0 20px 56px rgba(12, 34, 41, 0.32);
+          border: 1px solid #d2dae4;
+          border-radius: 12px;
+          background: #ffffff;
           z-index: 2147483647;
           display: flex;
           flex-direction: column;
@@ -1301,21 +1818,21 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           justify-content: flex-start;
           gap: 10px;
           padding: 10px 12px;
-          border-bottom: 1px solid #b7d0d6;
-          background: #edf7f9;
+          border-bottom: 1px solid #dbe2ea;
+          background: #f8fafc;
         }
         .variant-window-head h3 {
           margin: 0;
           font-size: 12pt !important;
           font-weight: 800;
-          color: #103946;
+          color: #0f172a;
           text-transform: uppercase;
           letter-spacing: 0.04em;
         }
         .variant-window-head p {
           margin: 2px 0 0;
           font-size: 10pt !important;
-          color: #3a5961;
+          color: #64748b;
         }
         .variant-window-error {
           margin: 0;
@@ -1350,8 +1867,10 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         .snp-bar {
           width: 36px;
           border-radius: 7px 7px 3px 3px;
-          background: #cc4a2d;
-          box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+          background: #0f6cbd;
+        }
+        .locus-page *:hover {
+          box-shadow: none !important;
         }
         @keyframes pageIn {
           from {
@@ -1369,6 +1888,9 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           }
           .auth-input {
             min-width: 130px;
+          }
+          .viewer-locus-input {
+            min-width: 100%;
           }
           .viewer-grid {
             grid-template-columns: 1fr;
@@ -1390,21 +1912,17 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         }
       `}</style>
       <style jsx global>{`
-        /* IGV visual language: slate + orange, non-purple */
+        /* IGV minimal modern theme (flat, no hover shadow) */
         .igv-root-div,
         .igv-container,
         .igv-column-container {
           font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif !important;
         }
         .igv-navbar {
-          min-height: 48px !important;
-          height: 48px !important;
-          background: #1f4335 !important;
-          border-color: #1b392c !important;
-          color: #fff6e4 !important;
+          display: none !important;
         }
         .igv-navbar .igv-current-genome {
-          color: #fff0d8 !important;
+          color: #e2e8f0 !important;
           font-size: 14pt !important;
           font-weight: 700 !important;
           letter-spacing: 0.03em !important;
@@ -1419,20 +1937,20 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           .igv-search-container
           input.igv-search-input {
           height: 44px !important;
-          border-color: #d58d45 !important;
-          border-width: 2px !important;
+          border-color: #cbd5e1 !important;
+          border-width: 1px !important;
           font-size: 14pt !important;
-          color: #1f2a24 !important;
-          background-color: #fff9ec !important;
+          color: #0f172a !important;
+          background-color: #ffffff !important;
         }
         .igv-navbar .igv-navbar-button {
           min-height: 44px !important;
           line-height: 42px !important;
           border-radius: 8px !important;
-          border-width: 2px !important;
-          border-color: #d58d45 !important;
-          background-color: #fff2d6 !important;
-          color: #2f3d34 !important;
+          border-width: 1px !important;
+          border-color: #cbd5e1 !important;
+          background-color: #ffffff !important;
+          color: #0f172a !important;
           font-size: 14pt !important;
           font-weight: 700 !important;
           letter-spacing: 0.03em !important;
@@ -1440,15 +1958,15 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           padding-right: 10px !important;
         }
         .igv-navbar .igv-navbar-button.igv-navbar-button-clicked {
-          background-color: #b84f28 !important;
-          border-color: #b84f28 !important;
-          color: #fff9ef !important;
+          background-color: #0f6cbd !important;
+          border-color: #0f6cbd !important;
+          color: #ffffff !important;
         }
         .igv-navbar .igv-navbar-right-container .igv-zoom-widget div:first-child,
         .igv-navbar .igv-navbar-right-container .igv-zoom-widget div:last-child {
           width: 44px !important;
           height: 44px !important;
-          color: #ffd9a3 !important;
+          color: #cbd5e1 !important;
         }
         .igv-navbar .igv-navbar-right-container .igv-zoom-widget svg {
           width: 30px !important;
@@ -1457,39 +1975,39 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         .igv-gear-menu-column > div > div {
           width: 24px !important;
           height: 24px !important;
-          color: #234031 !important;
+          color: #475569 !important;
         }
         .igv-gear-menu-column > div > div > svg {
           width: 24px !important;
           height: 24px !important;
         }
         .igv-track-drag-column > .igv-track-drag-handle {
-          background-color: #b84f28 !important;
-          border-radius: 8px !important;
+          background-color: #0f6cbd !important;
+          border-radius: 6px !important;
         }
         .igv-track-label {
           font-size: 14pt !important;
           font-weight: 700 !important;
-          border-width: 2px !important;
-          border-color: #2d493a !important;
-          background-color: #fff5df !important;
-          color: #1f2a24 !important;
+          border-width: 1px !important;
+          border-color: #cbd5e1 !important;
+          background-color: #ffffff !important;
+          color: #0f172a !important;
           padding: 2px 8px !important;
           border-radius: 8px !important;
         }
         .igv-menu-popup {
-          border-width: 2px !important;
-          border-color: #2d493a !important;
-          box-shadow: 0 12px 26px rgba(20, 33, 27, 0.2) !important;
+          border-width: 1px !important;
+          border-color: #cbd5e1 !important;
+          box-shadow: none !important;
         }
         .igv-menu-popup-header {
-          background-color: #e9d7b8 !important;
+          background-color: #f1f5f9 !important;
         }
         .igv-axis-column,
         .igv-scrollbar-column,
         .igv-track-drag-column,
         .igv-gear-menu-column {
-          background-color: #fff9ec !important;
+          background-color: #f8fafc !important;
         }
         .igv-scrollbar-column {
           width: 16px !important;
@@ -1500,11 +2018,14 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         .igv-scrollbar-column > div > div {
           width: 12px !important;
           left: 1px !important;
-          border-color: #89958f !important;
-          background-color: rgba(184, 79, 40, 0.28) !important;
+          border-color: #94a3b8 !important;
+          background-color: rgba(148, 163, 184, 0.4) !important;
         }
         .igv-scrollbar-column > div > div:hover {
-          background-color: rgba(184, 79, 40, 0.46) !important;
+          background-color: rgba(148, 163, 184, 0.4) !important;
+        }
+        .igv-root-div *:hover {
+          box-shadow: none !important;
         }
       `}</style>
     </main>

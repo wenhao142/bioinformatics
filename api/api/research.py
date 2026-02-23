@@ -30,6 +30,8 @@ class ResearchSummaryRequest(BaseModel):
     end: int | None = None
     top_n: int = Field(default=5, ge=1, le=20)
     include_pubmed: bool = True
+    llm_mode: str = Field(default="auto", pattern="^(auto|offline)$")
+    llm_model: str | None = Field(default=None, max_length=120)
 
 
 def _normalized_genes(genes: list[str] | None) -> list[str]:
@@ -96,9 +98,9 @@ def _llm_summary_enabled() -> bool:
     )
 
 
-def _call_cloud_llm(prompt: str) -> dict[str, Any]:
+def _call_cloud_llm(prompt: str, model_override: str | None = None) -> dict[str, Any]:
     api_key = os.getenv("OPENAI_API_KEY")
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    model = model_override or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY missing")
     payload = {
@@ -257,10 +259,14 @@ def summarize_research(request: ResearchSummaryRequest, user=Depends(current_use
     citation_lookup: dict[str, dict[str, Any]] = bundle["citation_lookup"]
     mode = "offline-template"
     warnings: list[str] = []
+    llm_mode_requested = request.llm_mode
+    llm_model_used: str | None = None
 
     summary_text: str
     cited_ids: list[str]
-    if _llm_summary_enabled():
+    if request.llm_mode == "offline":
+        summary_text, cited_ids = _offline_summary(request, bundle)
+    elif _llm_summary_enabled():
         prompt = json.dumps(
             {
                 "disease": request.disease,
@@ -271,7 +277,7 @@ def summarize_research(request: ResearchSummaryRequest, user=Depends(current_use
             ensure_ascii=True,
         )
         try:
-            llm_out = _call_cloud_llm(prompt)
+            llm_out = _call_cloud_llm(prompt, request.llm_model)
             summary_text = str(llm_out.get("summary", "")).strip()
             raw_ids = llm_out.get("citations") if isinstance(llm_out.get("citations"), list) else []
             cleaned: list[str] = []
@@ -284,11 +290,14 @@ def summarize_research(request: ResearchSummaryRequest, user=Depends(current_use
             if not cited_ids:
                 raise ValueError("No valid citations from LLM")
             mode = "online-llm"
+            llm_model_used = request.llm_model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
         except Exception as exc:
             warnings.append(f"LLM summary unavailable, fallback to offline template: {exc}")
             summary_text, cited_ids = _offline_summary(request, bundle)
             mode = "offline-template"
     else:
+        if request.llm_mode == "auto":
+            warnings.append("LLM summary is disabled or unavailable, using offline template.")
         summary_text, cited_ids = _offline_summary(request, bundle)
 
     citations = [citation_lookup[citation_id] for citation_id in cited_ids]
@@ -301,4 +310,6 @@ def summarize_research(request: ResearchSummaryRequest, user=Depends(current_use
         "citations": citations,
         "citation_ids": cited_ids,
         "warnings": warnings,
+        "llm_mode_requested": llm_mode_requested,
+        "llm_model_used": llm_model_used,
     }

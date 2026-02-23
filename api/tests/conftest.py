@@ -12,8 +12,11 @@ if str(ROOT) not in sys.path:
 def reset_in_memory_state(monkeypatch):
     # Tests rely on deterministic in-memory state across modules.
     monkeypatch.setenv("VARIANTS_USE_DB", "false")
+    monkeypatch.setenv("AUTH_USE_DB", "false")
 
-    from api import audit, causal, datasets, literature, omics, plugins, rbac, runs, variants
+    from api import audit, auth, causal, datasets, literature, omics, plugins, rbac, runs, variants
+
+    auth.reset_auth_store_for_tests()
 
     if hasattr(variants.STORE, "rows"):
         variants.STORE.rows.clear()
@@ -32,6 +35,8 @@ def reset_in_memory_state(monkeypatch):
     causal._CAUSAL_RUNS.clear()
     causal._CAUSAL_RESULTS.clear()
     plugins._MANIFESTS.clear()
+    plugins._PLUGIN_RUNS.clear()
+    plugins._PLUGIN_RESULTS.clear()
     audit._EVENTS.clear()
 
     if audit._STORE and hasattr(audit._STORE, "conn"):

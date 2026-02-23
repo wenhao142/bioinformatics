@@ -30,6 +30,7 @@ services:
       MINIO_ENDPOINT: http://minio:9000
       JWT_SECRET: ${JWT_SECRET}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      AUTH_USE_DB: ${AUTH_USE_DB:-true}
     ports:
       - "18000:8000"
     depends_on:
@@ -77,12 +78,12 @@ services:
       - ./assets:/seed:ro
     entrypoint: >
       /bin/sh -c "
-      mc alias set local http://minio:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD &&
-      mc mb -p local/igv &&
+      until mc alias set local http://minio:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD; do sleep 2; done &&
+      until mc ready local; do sleep 2; done &&
+      mc mb -p local/igv || true &&
       mc cp /seed/genes.sample.bed local/igv/genes.sample.bed &&
       mc anonymous set download local/igv &&
-      mc admin config set local api cors_allow_origin='*' &&
-      mc admin service restart local
+      mc admin config set local api cors_allow_origin='*' || true
       "
     restart: "no"
 

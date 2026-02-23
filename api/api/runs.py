@@ -85,6 +85,7 @@ def run_evidence(
     start: int = Query(1),
     end: int = Query(250_000_000),
     top_n: int = Query(20, ge=1, le=200),
+    method: str | None = Query(default=None, max_length=120),
     project_id: str | None = Query(default=None),
     user=Depends(current_user),
 ):
@@ -111,6 +112,7 @@ def run_evidence(
         "created_by": user["email"],
         "project_id": project_id,
         "kind": "evidence_rank",
+        "selected_method": method or "evidence-rank",
         "params": params,
         "input_hashes": input_hashes,
         "tool_versions": _tool_versions(),

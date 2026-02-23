@@ -1,7 +1,7 @@
-# AGENTS.md ‚Äî AD Multi-Omics Locus Evidence Platform (Intranet-first SaaS)
+# AGENTS.md ??AD Multi-Omics Locus Evidence Platform (Intranet-first SaaS)
 
 ## Mission
-Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimer‚Äôs disease (AD) multi-omics evidence integration:
+Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimer?ôs disease (AD) multi-omics evidence integration:
 - Upload genomics/transcriptomics/proteomics data
 - Visualize loci on chromosomes (embedded genome viewer)
 - Rank candidate loci/genes with explainable baseline scoring
@@ -12,7 +12,7 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimer‚
 ## Non-goals (MVP)
 - Single-cell pipelines, raw FASTQ/BAM/CRAM processing
 - Full fine-mapping/coloc/MR (unless explicitly added as a plugin later)
-- Fully automated ‚Äúno-human-review‚Äù deployment to production
+- Fully automated ?úno-human-review??deployment to production
 
 ## Operating modes
 - Offline mode: MUST work without external network (no PubMed, no cloud LLM)
@@ -47,7 +47,7 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimer‚
 
 # Roadmap (MVP)
 
-## EPIC 0 ‚Äî Scaffolding & CI
+## EPIC 0 ??Scaffolding & CI
 - [x] T0.1 Monorepo scaffold + docker compose (web+api+postgres+minio+worker)
   - Acceptance:
     - `docker compose up` brings up services and UI loads
@@ -55,7 +55,7 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimer‚
   - Acceptance:
     - PR cannot merge unless CI green
 
-## EPIC 1 ‚Äî Auth / RBAC / Audit
+## EPIC 1 ??Auth / RBAC / Audit
 - [x] T1.1 Auth (local accounts) + stub for OIDC
   - Acceptance:
     - Login works; API protected by tokens
@@ -66,7 +66,7 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimer‚
   - Acceptance:
     - Upload/run/export recorded and queryable
 
-## EPIC 2 ‚Äî Data ingest
+## EPIC 2 ??Data ingest
 - [x] T2.1 Upload API + object storage (S3 interface; MinIO in intranet)
   - Acceptance:
     - Upload creates dataset record with hash + storage URI
@@ -77,8 +77,8 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimer‚
   - Acceptance:
     - Summary stats shown; standardized schema stored
 
-## EPIC 3 ‚Äî Baseline scoring (explainable)
-- [x] T3.1 Variant‚ÜíGene mapping (MVP: nearest gene / annotation-based)
+## EPIC 3 ??Baseline scoring (explainable)
+- [x] T3.1 Variant?íGene mapping (MVP: nearest gene / annotation-based)
   - Acceptance:
     - Each top locus links to candidate gene(s)
 - [x] T3.2 Evidence join (omics + genomics) + rank aggregation
@@ -94,7 +94,7 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimer‚
   - Acceptance:
     - `/report/{project_id}/{run_id}` returns Markdown/HTML summarizing top loci/genes, evidence tables, methods, and reproducibility metadata
 
-## EPIC 4 ‚Äî Locus Explorer (genome viewer)
+## EPIC 4 ??Locus Explorer (genome viewer)
 - [x] T4.1 Embed genome viewer (choose igv.js first)
   - Acceptance:
     - `/locus/chr:start-end` shows tracks UI
@@ -111,7 +111,7 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimer‚
   - Acceptance:
     - Custom shell around igv.js with minimalist modern style (flat color surfaces, no hover shadows), native IGV navbar replaced by custom locus/zoom controls, mobile-friendly controls, and clear track toggles (genes/variants)
 
-## EPIC 5 ‚Äî Literature + Research direction
+## EPIC 5 ??Literature + Research direction
 - [x] T5.1 PubMed provider (online mode only)
   - Acceptance:
     - Top genes retrieve PubMed metadata; store pmid + title + year
@@ -122,21 +122,38 @@ Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimer‚
   - Acceptance:
     - Output contains citations list; no fabricated references
 
-## EPIC 6 ‚Äî Method Registry (plugins)
+## EPIC 6 ??Method Registry (plugins)
 - [x] T6.1 Plugin manifest spec (input/output schema, version, resources)
   - Acceptance:
     - Register method via JSON; validate schema
-- [ ] T6.2 Plugin runner (Docker image execution)
+- [x] T6.2 Plugin runner (Docker image execution)
   - Acceptance:
     - Baseline plugin runs and writes ranked loci/genes back to DB
-- [ ] T6.3 UI method management
+- [x] T6.3 UI method management
   - Acceptance:
     - Enable/disable methods; compare runs
 
-## EPIC 7 ‚Äî Deliverables
-- [ ] T7.1 Report export (Markdown/HTML; PDF later)
+## EPIC 7 ??Deliverables
+- [x] T7.1 Report export (Markdown/HTML; PDF later)
   - Acceptance:
     - Export includes top loci/genes, evidence tables, research direction, run metadata
-- [ ] T7.2 Demo dataset + scripted demo
+- [x] T7.2 Demo dataset + scripted demo
   - Acceptance:
-    - Fresh install can demo end-to-end in ‚â§10 minutes
+    - Fresh install can demo end-to-end in ??0 minutes
+
+## EPIC 8 ??UI configurable workflow (new)
+- [x] T8.1 UI statistical method selector
+  - Acceptance:
+    - User can select statistical method on the web page before run (e.g., baseline rank, causal score, plugin method)
+    - Selected method is stored in run metadata and shown in report/export
+- [x] T8.2 UI user file upload
+  - Acceptance:
+    - User can upload own VCF and omics files directly from web page (no CLI required)
+    - Upload progress/status and parse result are visible in UI
+    - Uploaded dataset is linked to project and reusable in later runs
+- [x] T8.3 UI LLM method selector
+  - Acceptance:
+    - User can choose LLM summarization mode/method in UI (offline template vs enabled cloud model)
+    - UI clearly shows inference label + citation constraints
+    - If online LLM is unavailable, UI falls back to offline template with warning
+

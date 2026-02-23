@@ -129,16 +129,16 @@ docker compose -f infra/docker-compose.yml up -d --build web
 - UI entry point:
   - `http://localhost:13100/` has a **Causal Scoring (T3.4 MVP)** panel for authenticated runs and top-gene preview.
 
-## Report auto-generation (T3.5)
+## Report export (T7.1)
 - Endpoint: `GET /report/{project_id}/{run_id}`
 - Formats:
   - Markdown (default): `GET /report/{project_id}/{run_id}`
   - HTML: `GET /report/{project_id}/{run_id}?format=html`
 - Report includes:
-  - top genes
-  - evidence table (loci/variants)
-  - method/scoring label
-  - reproducibility metadata (`params`, `input_hashes`, `tool_versions`, `signature_hash`, `result_hash`)
+  - top genes table
+  - top loci/variant evidence table (depends on run kind)
+  - research-direction section (offline inference, hypotheses, experiment plans, citations)
+  - run metadata bundle (`params`, `input_hashes`, `tool_versions`, `signature_hash`, `result_hash`, stability flags)
 
 ## Research summary with citations (T5.3)
 - Endpoint: `POST /research/summary`
@@ -174,5 +174,78 @@ docker compose -f infra/docker-compose.yml up -d --build web
   - `input_schema` and `output_schema` must be object schemas with non-empty `properties`
   - `required` fields must reference existing properties
   - duplicate `plugin_id` is rejected
+
+## Plugin runner (T6.2)
+- Run endpoint: `POST /plugins/{plugin_id}/run`
+- Run history:
+  - `GET /plugins/{plugin_id}/runs`
+  - `GET /plugins/{plugin_id}/runs/{run_id}`
+  - `GET /plugins/{plugin_id}/runs/{run_id}/result`
+- Execution modes:
+  - built-in baseline mode (for `baseline` tagged plugins or `builtin/*` image) uses internal evidence ranking
+  - Docker mode uses `docker run --rm -i <image>` and expects JSON output on stdout
+- Docker mode toggle:
+  - set `PLUGIN_RUNNER_ALLOW_DOCKER=true`
+- Stored run metadata:
+  - `engine`, `image`, `project_id`, `input_hash`, `result_hash`, `counts`
+
+## Method management UI (T6.3)
+- Route: `http://localhost:13100/`
+- Section: **Method Management (T6.3)**
+- Capabilities:
+  - enable/disable registered methods (plugin toggle)
+  - trigger method runs from selected region/project
+  - compare two runs from the same method and inspect overlap / score deltas
+
+## UI statistical method selector (T8.1)
+- Route: `http://localhost:13100/`
+- Section: **Select Statistical Method (T8.1)**
+- Capabilities:
+  - choose method before each run (`Baseline Evidence Rank`, `Causal Score`, or enabled plugin)
+  - run selected method from the same region/project controls
+  - selected method is stored in run metadata (`selected_method`) and appears in report export metadata
+
+## UI user file upload (T8.2)
+- Route: `http://localhost:13100/`
+- Section: **Upload Data (T8.2)**
+- Capabilities:
+  - upload your own VCF file via browser
+  - upload your own expression TSV via browser
+  - see ingestion status directly in UI (no CLI required)
+
+## UI LLM method selector (T8.3)
+- Route: `http://localhost:13100/`
+- Section: **Choose LLM Method (T8.3)**
+- Capabilities:
+  - choose summary mode in UI: `offline` or `auto` (cloud LLM if available)
+  - optional model override when mode is `auto`
+  - fallback warning is shown when cloud LLM is unavailable and offline template is used
+
+## Account management (Auth)
+- Login endpoint: `POST /auth/login`
+- Admin-only account creation endpoint: `POST /auth/register`
+  - payload: `email`, `password` (>= 8 chars), `role` (`admin` | `analyst` | `viewer`)
+- List accounts endpoint (admin only): `GET /auth/users`
+- Web UI:
+  - `Session` panel includes email/password login
+  - account creation form is available after admin login
+- Persistence:
+  - set `AUTH_USE_DB=true` (enabled by default in compose) to store users in Postgres `app_users` table
+
+## Scripted demo dataset flow (T7.2)
+- Demo input files:
+  - `infra/example.vcf` (chr1 demo variants)
+  - `infra/expr.tsv` (demo expression rows)
+- One-command smoke demo (Windows PowerShell):
+```powershell
+powershell -ExecutionPolicy Bypass -File .\infra\demo_smoke.ps1
+```
+- What the script does (end-to-end, offline-capable):
+  - starts/updates docker stack
+  - logs in and obtains a token
+  - uploads demo VCF + expression table
+  - runs evidence ranking + causal scoring
+  - generates research directions
+  - exports report markdown/html to `infra/demo-output/`
 
 # bioinformatics

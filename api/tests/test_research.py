@@ -94,6 +94,8 @@ def test_research_summary_offline_with_citations(monkeypatch):
     assert body["inference_label"] == "inference"
     assert len(body["citations"]) >= 2
     assert all("id" in row and "source_type" in row for row in body["citations"])
+    assert body["llm_mode_requested"] == "auto"
+    assert body["llm_model_used"] is None
 
 
 def test_research_summary_llm_filters_invalid_citations(monkeypatch):
@@ -106,7 +108,7 @@ def test_research_summary_llm_filters_invalid_citations(monkeypatch):
 
     from api import research
 
-    def _fake_llm(_prompt: str):
+    def _fake_llm(_prompt: str, _model: str | None = None):
         return {"summary": "LLM summary", "citations": ["C1", "C999", "C2"]}
 
     monkeypatch.setattr(research, "_call_cloud_llm", _fake_llm)
@@ -118,3 +120,64 @@ def test_research_summary_llm_filters_invalid_citations(monkeypatch):
     assert body["mode"] == "online-llm"
     assert body["summary"] == "LLM summary"
     assert body["citation_ids"] == ["C1", "C2"]
+    assert body["llm_mode_requested"] == "auto"
+
+
+def test_research_summary_forces_offline_even_if_llm_enabled(monkeypatch):
+    monkeypatch.setenv("ENABLE_LLM_SUMMARY", "true")
+    monkeypatch.setenv("ONLINE_MODE", "true")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    client = TestClient(app)
+    headers = auth_header(client)
+    ingest_variants(client, headers)
+
+    payload = {
+        "disease": "Alzheimer disease",
+        "chr": "chr1",
+        "start": 1,
+        "end": 1000,
+        "top_n": 2,
+        "llm_mode": "offline",
+    }
+    response = client.post("/research/summary", headers=headers, json=payload)
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["mode"] == "offline-template"
+    assert body["llm_mode_requested"] == "offline"
+    assert body["llm_model_used"] is None
+
+
+def test_research_summary_uses_model_override(monkeypatch):
+    monkeypatch.setenv("ENABLE_LLM_SUMMARY", "true")
+    monkeypatch.setenv("ONLINE_MODE", "true")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    client = TestClient(app)
+    headers = auth_header(client)
+    ingest_variants(client, headers)
+
+    from api import research
+
+    calls: list[str | None] = []
+
+    def _fake_llm(_prompt: str, model: str | None = None):
+        calls.append(model)
+        return {"summary": "Model override summary", "citations": ["C1"]}
+
+    monkeypatch.setattr(research, "_call_cloud_llm", _fake_llm)
+    payload = {
+        "disease": "Alzheimer disease",
+        "chr": "chr1",
+        "start": 1,
+        "end": 1000,
+        "top_n": 2,
+        "llm_mode": "auto",
+        "llm_model": "gpt-4o-mini",
+    }
+    response = client.post("/research/summary", headers=headers, json=payload)
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["mode"] == "online-llm"
+    assert body["llm_model_used"] == "gpt-4o-mini"
+    assert calls == ["gpt-4o-mini"]

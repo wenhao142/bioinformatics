@@ -195,6 +195,7 @@ def run_causal_scoring(
     end: int = Query(250_000_000),
     top_n: int = Query(20, ge=1, le=200),
     ld_window_bp: int = Query(50_000, ge=100, le=1_000_000),
+    method: str | None = Query(default=None, max_length=120),
     project_id: str | None = Query(default=None),
     user=Depends(current_user),
 ):
@@ -229,6 +230,7 @@ def run_causal_scoring(
         "created_at": time.time(),
         "created_by": user["email"],
         "project_id": project_id,
+        "selected_method": method or "causal-score",
         "params": params,
         "input_hashes": input_hashes,
         "tool_versions": _tool_versions(),

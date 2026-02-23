@@ -50,6 +50,7 @@ def test_causal_scoring_run_and_queries():
     result = body["result"]
     assert run["kind"] == "causal_score"
     assert run["project_id"] == "demo-project"
+    assert run["selected_method"] == "causal-score"
     assert run["counts"]["variant_scores"] == 3
     assert run["counts"]["gene_scores"] >= 1
     assert run["inference_label"] == "inference"
@@ -83,3 +84,16 @@ def test_causal_scoring_accepts_missing_omics():
 
     assert body["result"]["meta"]["omics_rows_loaded"] == 0
     assert len(body["result"]["variant_scores"]) == 2
+
+
+def test_causal_scoring_stores_selected_method_override():
+    client = TestClient(app)
+    headers = auth_header(client)
+    ingest_variants(client, headers)
+
+    run_response = client.post(
+        "/causal/score?chr=chr1&start=1&end=1000&top_n=2&method=plugin:causal-x",
+        headers=headers,
+    )
+    assert run_response.status_code == 200
+    assert run_response.json()["run"]["selected_method"] == "plugin:causal-x"

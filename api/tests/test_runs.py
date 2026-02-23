@@ -50,6 +50,7 @@ def test_run_metadata_and_rerun_stability():
     assert len(first_run["input_hashes"]["omics_table_sha256"]) == 64
     assert "python" in first_run["tool_versions"]
     assert first_run["tool_versions"]["scoring"] == "evidence-v1"
+    assert first_run["selected_method"] == "evidence-rank"
     assert first_run["stable_with_previous"] is False
     assert first_run["rerun_of"] is None
 
@@ -65,6 +66,20 @@ def test_run_metadata_and_rerun_stability():
     lookup = client.get(f"/runs/{second_run['run_id']}", headers=headers)
     assert lookup.status_code == 200
     assert lookup.json()["run"]["run_id"] == second_run["run_id"]
+
+
+def test_run_metadata_stores_selected_method():
+    client = TestClient(app)
+    headers = auth_header(client)
+    ingest_variants(client, headers)
+    upload_omics(client, headers, logfc=1.0)
+
+    response = client.post(
+        "/runs/evidence?chr=chr1&start=1&end=1000&top_n=5&method=plugin:baseline-v2",
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["run"]["selected_method"] == "plugin:baseline-v2"
 
 
 def test_rerun_changes_when_inputs_change():
