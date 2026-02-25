@@ -33,3 +33,6 @@ signature:
 
 # AD dataset used for signature scoring
 ad_gse: "GSE63061"
+
+# Cross-platform Python executable, e.g. `python`, `python3`, or full path.
+python_bin: "python"

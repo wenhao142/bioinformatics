@@ -1,159 +1,282 @@
-# AGENTS.md ??AD Multi-Omics Locus Evidence Platform (Intranet-first SaaS)
+# AGENTS.md
 
-## Mission
-Build an intranet-deployable (offline-capable) SaaS-style web app for Alzheimer?™s disease (AD) multi-omics evidence integration:
-- Upload genomics/transcriptomics/proteomics data
-- Visualize loci on chromosomes (embedded genome viewer)
-- Rank candidate loci/genes with explainable baseline scoring
-- Generate evidence-backed research directions (offline fallback; online adds PubMed + LLM)
-- Support plugin-based methods (new AI/statistical models) via Dockerized runners
-- Produce auditable, reproducible, exportable reports for biotech clients
+# Autonomous Bioinformatics Workflow Engine
 
-## Non-goals (MVP)
-- Single-cell pipelines, raw FASTQ/BAM/CRAM processing
-- Full fine-mapping/coloc/MR (unless explicitly added as a plugin later)
-- Fully automated ?œno-human-review??deployment to production
+This document defines the full autonomous development specification for an AI-driven, plugin-based bioinformatics workflow platform.
 
-## Operating modes
-- Offline mode: MUST work without external network (no PubMed, no cloud LLM)
-- Online mode: Optional enhancements (PubMed metadata retrieval, cloud LLM summaries)
-
-## Hard constraints
-- Evidence integrity: Never fabricate citations. If an output is an inference, label it clearly.
-- Reproducibility: Every analysis run stores params, tool versions, input hashes.
-- Security: Project-based RBAC + audit log for upload/run/export events.
-- One task per PR. PR must pass CI (lint + tests) before merge.
-
-## Repository layout (expected)
-- `web/`      Next.js UI (Locus Explorer, Dashboard, Upload)
-- `api/`      FastAPI services (auth, RBAC, upload, runs, evidence)
-- `workers/`  background tasks (parsing, scoring, report, plugins)
-- `infra/`    docker/helm/compose, env templates, db migrations
-
-## Local development
-### Required commands (update to match repo)
-- Start: `docker compose up --build`
-- Web lint/test: `cd web && npm run lint && npm test`
-- API lint/test: `cd api && ruff check . && pytest -q`
-- Workers test: `cd workers && pytest -q`
-
-### Definition of Done (DoD)
-- Feature implemented with tests
-- Works in offline mode (if relevant)
-- Documentation updated (README or relevant docs)
-- PR includes verification steps + screenshots for UI changes
+The AI agent must follow this document strictly.
 
 ---
 
-# Roadmap (MVP)
+# 1. System Vision
 
-## EPIC 0 ??Scaffolding & CI
-- [x] T0.1 Monorepo scaffold + docker compose (web+api+postgres+minio+worker)
-  - Acceptance:
-    - `docker compose up` brings up services and UI loads
-- [x] T0.2 CI gate (lint + unit tests + container build)
-  - Acceptance:
-    - PR cannot merge unless CI green
+Build a modular, extensible, reproducible bioinformatics workflow engine where:
 
-## EPIC 1 ??Auth / RBAC / Audit
-- [x] T1.1 Auth (local accounts) + stub for OIDC
-  - Acceptance:
-    - Login works; API protected by tokens
-- [x] T1.2 Project RBAC (admin/analyst/viewer)
-  - Acceptance:
-    - Viewer cannot upload or run analyses
-- [x] T1.3 Audit log
-  - Acceptance:
-    - Upload/run/export recorded and queryable
+- Each bioinformatics tool is a plugin (building block)
+- Workflows are DAG-based compositions of plugins
+- Execution is containerized (Docker-first)
+- All runs are reproducible
+- New tools can be added without modifying core logic
+- AI can autonomously extend the system
 
-## EPIC 2 ??Data ingest
-- [x] T2.1 Upload API + object storage (S3 interface; MinIO in intranet)
-  - Acceptance:
-    - Upload creates dataset record with hash + storage URI
-- [x] T2.2 VCF parser (MVP fields) + indexing
-  - Acceptance:
-    - Variants list can be queried by chr; basic stats visible
-- [x] T2.3 Transcriptomics/Proteomics diff-table parser
-  - Acceptance:
-    - Summary stats shown; standardized schema stored
+---
 
-## EPIC 3 ??Baseline scoring (explainable)
-- [x] T3.1 Variant?’Gene mapping (MVP: nearest gene / annotation-based)
-  - Acceptance:
-    - Each top locus links to candidate gene(s)
-- [x] T3.2 Evidence join (omics + genomics) + rank aggregation
-  - Acceptance:
-    - Top genes/loci list generated with feature breakdown
-- [x] T3.3 Run reproducibility metadata
-  - Acceptance:
-    - Run stores params, tool versions, input hashes; rerun stable
-- [x] T3.4 Causal scoring pipeline (MVP, offline)
-  - Acceptance:
-    - Given uploaded VCF + optional expr/prot diff tables, API produces per-variant and per-gene scores (simple LD window + annotation weights); results saved per project/run and queryable via API/UI
-- [x] T3.5 Report auto-generation
-  - Acceptance:
-    - `/report/{project_id}/{run_id}` returns Markdown/HTML summarizing top loci/genes, evidence tables, methods, and reproducibility metadata
+# 2. Non-Negotiable Architectural Rules
 
-## EPIC 4 ??Locus Explorer (genome viewer)
-- [x] T4.1 Embed genome viewer (choose igv.js first)
-  - Acceptance:
-    - `/locus/chr:start-end` shows tracks UI
-- [x] T4.2 Tracks loader (genes, variants, scores)
-  - Acceptance:
-    - Tracks toggle; clicking feature updates evidence panel
-- [x] T4.3 Evidence panel cards
-  - Acceptance:
-    - Cards show sources or clearly labeled inferences
-- [x] T4.x Host gene annotation track
-  - Acceptance:
-    - Genes track served from our own MinIO/S3 (or signed URL), not public igv.org; CORS configured and loads in `/locus/*`
-- [x] T4.y IGV UI redesign
-  - Acceptance:
-    - Custom shell around igv.js with minimalist modern style (flat color surfaces, no hover shadows), native IGV navbar replaced by custom locus/zoom controls, mobile-friendly controls, and clear track toggles (genes/variants)
+AI MUST NOT:
 
-## EPIC 5 ??Literature + Research direction
-- [x] T5.1 PubMed provider (online mode only)
-  - Acceptance:
-    - Top genes retrieve PubMed metadata; store pmid + title + year
-- [x] T5.2 Offline fallback research-direction generator (template/rules)
-  - Acceptance:
-    - Offline mode still produces hypotheses/experiments section
-- [x] T5.3 Optional cloud LLM summarizer (must cite evidence bundle)
-  - Acceptance:
-    - Output contains citations list; no fabricated references
+- Hardcode tool names in core logic
+- Modify canonical data types without version bump
+- Bypass manifest validation
+- Execute tools outside container runner
+- Break backward compatibility
 
-## EPIC 6 ??Method Registry (plugins)
-- [x] T6.1 Plugin manifest spec (input/output schema, version, resources)
-  - Acceptance:
-    - Register method via JSON; validate schema
-- [x] T6.2 Plugin runner (Docker image execution)
-  - Acceptance:
-    - Baseline plugin runs and writes ranked loci/genes back to DB
-- [x] T6.3 UI method management
-  - Acceptance:
-    - Enable/disable methods; compare runs
+AI MUST:
 
-## EPIC 7 ??Deliverables
-- [x] T7.1 Report export (Markdown/HTML; PDF later)
-  - Acceptance:
-    - Export includes top loci/genes, evidence tables, research direction, run metadata
-- [x] T7.2 Demo dataset + scripted demo
-  - Acceptance:
-    - Fresh install can demo end-to-end in ??0 minutes
+- Use schema-driven validation
+- Record full provenance metadata
+- Maintain deterministic execution
+- Version all breaking changes
+- Deliver implementations compatible with both Windows and macOS
 
-## EPIC 8 ??UI configurable workflow (new)
-- [x] T8.1 UI statistical method selector
-  - Acceptance:
-    - User can select statistical method on the web page before run (e.g., baseline rank, causal score, plugin method)
-    - Selected method is stored in run metadata and shown in report/export
-- [x] T8.2 UI user file upload
-  - Acceptance:
-    - User can upload own VCF and omics files directly from web page (no CLI required)
-    - Upload progress/status and parse result are visible in UI
-    - Uploaded dataset is linked to project and reusable in later runs
-- [x] T8.3 UI LLM method selector
-  - Acceptance:
-    - User can choose LLM summarization mode/method in UI (offline template vs enabled cloud model)
-    - UI clearly shows inference label + citation constraints
-    - If online LLM is unavailable, UI falls back to offline template with warning
+---
 
+# 3. Core Components
+
+## 3.1 Method Registry
+
+Responsible for:
+
+- Registering plugins
+- Validating plugin manifest JSON schema
+- Version control of plugins
+- Querying available tools
+
+## 3.2 Plugin Manifest Specification
+
+Each plugin must define:
+
+- id
+- version (semantic versioning)
+- container_image (pinned tag)
+- inputs (typed)
+- outputs (typed)
+- params_schema
+- resource requirements
+- execution command template
+
+Manifest must pass platform JSON schema validation.
+
+---
+
+# 4. Canonical Data Types
+
+Platform-defined types:
+
+- reads.fastq.gz
+- align.bam (+ index)
+- variants.vcf.gz (+ index)
+- expression.counts.tsv
+- expression.diff_table.tsv
+- report.html
+
+New types require:
+
+- Version increment
+- Migration documentation
+
+---
+
+# 5. Workflow Engine
+
+Workflows are Directed Acyclic Graphs (DAG).
+
+Engine responsibilities:
+
+- Validate DAG acyclic property
+- Validate input/output compatibility
+- Resolve execution order (topological sort)
+- Support branching
+- Support parameter sweep mode
+- Support workflow export/import JSON
+
+---
+
+# 6. Execution Layer
+
+Plugin Runner must:
+
+1. Pull container image
+2. Mount inputs
+3. Inject parameters
+4. Execute command
+5. Capture logs
+6. Collect outputs
+7. Compute output hashes
+
+Execution must be isolated and reproducible.
+
+---
+
+# 7. Provenance & Reproducibility
+
+Each run must record:
+
+- Input dataset SHA256
+- Plugin ID + version
+- Container image digest
+- Parameter JSON
+- Output hashes
+- Execution timestamp
+
+Runs must be re-executable.
+
+---
+
+# 8. Adapter Plugin Pattern
+
+If new tools use incompatible formats:
+
+- Implement adapter plugin
+- Convert to canonical type
+- Do not alter core data model
+
+---
+
+# 9. Advanced Workflow Support
+
+System must support:
+
+- WGS pipelines
+- RNA-seq pipelines
+- GWAS pipelines
+- eQTL pipelines
+- Multi-omics integration
+- Snakemake wrapper plugin
+- Nextflow wrapper plugin
+
+---
+
+# 10. Autonomous Development Protocol
+
+AI must follow this loop:
+
+1. Read AGENTS.md
+2. Locate first unchecked task
+3. Break task into subtasks
+4. Implement
+5. Validate with tests
+6. If tests pass â†’ check box
+7. Log changes
+8. Repeat
+
+AI must not skip validation.
+
+---
+
+# 11. Development Modes
+
+## Safe Mode
+- Small changes only
+- No schema modification
+
+## Refactor Mode
+- Internal improvements
+- No external behavior change
+
+## Expansion Mode
+- Add plugins
+- Add workflow templates
+- Extend ecosystem
+
+Mode must be explicitly declared before major updates.
+
+---
+
+# 12. AI Task Checklist
+
+## Core Infrastructure
+
+- [x] Method Registry implemented
+- [x] Manifest JSON schema validator
+- [x] Windows + macOS compatibility
+- [x] Canonical data type system
+- [x] Plugin runner completed
+- [x] Provenance tracking
+- [x] Run comparison engine
+
+---
+
+## Workflow Engine
+
+- [x] DAG validation
+- [x] I/O compatibility checker
+- [x] Topological execution resolver
+- [x] Branching support
+- [x] Parameter sweep mode
+- [x] Workflow import/export
+
+---
+
+## Plugin Ecosystem
+
+- [x] Adapter plugin framework
+- [x] Semantic versioning enforcement
+- [x] Deprecated plugin policy
+- [x] Plugin isolation validation
+- [x] Registry search API
+
+---
+
+## Bioinformatics Templates
+
+- [x] WGS template
+- [x] RNA-seq template
+- [x] GWAS template
+- [x] eQTL template
+- [x] Multi-omics template
+
+---
+
+## Advanced Integration
+
+- [x] Snakemake wrapper
+- [x] Nextflow wrapper
+- [x] Distributed execution support
+- [x] Cloud storage integration
+- [x] Docker raw-data end-to-end execution
+  - Acceptance:
+    - User can start Docker stack and submit raw bioinformatics input data (e.g., FASTQ/BAM/VCF) without manual file surgery.
+    - Pipeline runs inside containers and produces queryable outputs in platform storage.
+    - Verified on both Windows and macOS.
+
+---
+
+## UI Layer
+
+- [x] Visual workflow builder
+- [x] Drag-and-drop composition
+- [x] Parameter configuration panel
+- [x] Run monitoring dashboard
+- [x] Reproducibility report export
+- [x] Lego-style tool selection flow
+  - Acceptance:
+    - User can compose/select tools like building blocks in UI and launch a run.
+    - UI prevents invalid connections/inputs and shows clear validation errors.
+    - Composed workflow is saved and reusable per project.
+
+---
+
+# 13. Completion Policy
+
+A checkbox may only be marked complete if:
+
+- Implementation exists
+- Unit tests pass
+- Integration tests pass
+- Windows and macOS compatibility is verified
+- No architectural rules violated
+
+---
+
+End of AGENTS.md

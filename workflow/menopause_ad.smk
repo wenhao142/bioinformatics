@@ -4,6 +4,7 @@ configfile: "config/menopause_ad.yaml"
 
 GSE_IDS = config["gse_ids"]
 OUT_BASE = "data/geo"
+PYTHON_BIN = config.get("python_bin", "python")
 
 rule all:
     input:
@@ -20,7 +21,7 @@ rule fetch_geo:
     threads: 2
     shell:
         "mkdir -p {params.outdir} && "
-        "/Users/yuewenhao/miniforge3/bin/python scripts/py_fetch_geo.py {wildcards.gse} {params.outdir}"
+        "{PYTHON_BIN} scripts/py_fetch_geo.py {wildcards.gse} {params.outdir}"
 
 rule de_ttest:
     input:
@@ -37,7 +38,7 @@ rule de_ttest:
     threads: 2
     shell:
         "mkdir -p results/de && "
-        "/Users/yuewenhao/miniforge3/bin/python scripts/py_de_ttest.py {input.expr} {input.pheno} "
+        "{PYTHON_BIN} scripts/py_de_ttest.py {input.expr} {input.pheno} "
         "\"{params.group}\" \"{params.case}\" \"{params.ctrl}\" {params.prefix}"
 
 rule build_signature:
@@ -53,7 +54,7 @@ rule build_signature:
     threads: 1
     shell:
         "mkdir -p results/signatures && "
-        "/Users/yuewenhao/miniforge3/bin/python scripts/py_build_signature.py {input.de} {params.logfc} {params.fdr} {params.prefix}"
+        "{PYTHON_BIN} scripts/py_build_signature.py {input.de} {params.logfc} {params.fdr} {params.prefix}"
 
 rule score_ad:
     input:
@@ -67,4 +68,4 @@ rule score_ad:
     threads: 2
     shell:
         "mkdir -p results/ssgsea && "
-        "/Users/yuewenhao/miniforge3/bin/python scripts/py_score_signature.py {input.expr} {input.up} {input.down} {output}"
+        "{PYTHON_BIN} scripts/py_score_signature.py {input.expr} {input.up} {input.down} {output}"

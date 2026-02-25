@@ -1,0 +1,51 @@
+{
+  "workflow_id": "template.eqtl",
+  "nodes": [
+    {
+      "node_id": "prepare_genotype",
+      "plugin_id": "eqtl_genotype_prep",
+      "input_types": {
+        "vcf": "variants.vcf.gz"
+      },
+      "output_types": {
+        "vcf": "variants.vcf.gz"
+      }
+    },
+    {
+      "node_id": "prepare_expr",
+      "plugin_id": "eqtl_expr_prep",
+      "input_types": {
+        "counts": "expression.counts.tsv"
+      },
+      "output_types": {
+        "counts": "expression.counts.tsv"
+      }
+    },
+    {
+      "node_id": "map",
+      "plugin_id": "eqtl_map",
+      "input_types": {
+        "vcf": "variants.vcf.gz",
+        "counts": "expression.counts.tsv"
+      },
+      "output_types": {
+        "diff": "expression.diff_table.tsv"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from_node": "prepare_genotype",
+      "from_output": "vcf",
+      "to_node": "map",
+      "to_input": "vcf"
+    },
+    {
+      "from_node": "prepare_expr",
+      "from_output": "counts",
+      "to_node": "map",
+      "to_input": "counts"
+    }
+  ],
+  "parameter_sweeps": {}
+}

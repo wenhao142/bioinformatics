@@ -1,0 +1,34 @@
+{
+  "workflow_id": "template.rnaseq",
+  "nodes": [
+    {
+      "node_id": "quant",
+      "plugin_id": "rna_quant",
+      "input_types": {
+        "reads": "reads.fastq.gz"
+      },
+      "output_types": {
+        "counts": "expression.counts.tsv"
+      }
+    },
+    {
+      "node_id": "de",
+      "plugin_id": "rna_de",
+      "input_types": {
+        "counts": "expression.counts.tsv"
+      },
+      "output_types": {
+        "diff": "expression.diff_table.tsv"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from_node": "quant",
+      "from_output": "counts",
+      "to_node": "de",
+      "to_input": "counts"
+    }
+  ],
+  "parameter_sweeps": {}
+}

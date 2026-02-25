@@ -7,9 +7,13 @@ __all__ = [
     "omics",
     "evidence",
     "plugins",
+    "canonical_types",
+    "manifest_schema",
+    "method_registry",
     "runs",
     "causal",
     "report",
     "literature",
     "research",
+    "workflows",
 ]

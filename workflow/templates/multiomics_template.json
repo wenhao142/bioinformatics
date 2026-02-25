@@ -1,0 +1,45 @@
+{
+  "workflow_id": "template.multiomics",
+  "nodes": [
+    {
+      "node_id": "variant_source",
+      "plugin_id": "multiomics_variant_source",
+      "output_types": {
+        "vcf": "variants.vcf.gz"
+      }
+    },
+    {
+      "node_id": "expr_source",
+      "plugin_id": "multiomics_expr_source",
+      "output_types": {
+        "diff": "expression.diff_table.tsv"
+      }
+    },
+    {
+      "node_id": "integrate",
+      "plugin_id": "multiomics_integrator",
+      "input_types": {
+        "vcf": "variants.vcf.gz",
+        "diff": "expression.diff_table.tsv"
+      },
+      "output_types": {
+        "html": "report.html"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from_node": "variant_source",
+      "from_output": "vcf",
+      "to_node": "integrate",
+      "to_input": "vcf"
+    },
+    {
+      "from_node": "expr_source",
+      "from_output": "diff",
+      "to_node": "integrate",
+      "to_input": "diff"
+    }
+  ],
+  "parameter_sweeps": {}
+}

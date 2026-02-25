@@ -1,0 +1,39 @@
+{
+  "workflow_id": "template.gwas",
+  "nodes": [
+    {
+      "node_id": "assoc",
+      "plugin_id": "gwas_assoc",
+      "input_types": {
+        "vcf": "variants.vcf.gz"
+      },
+      "output_types": {
+        "diff": "expression.diff_table.tsv"
+      }
+    },
+    {
+      "node_id": "report",
+      "plugin_id": "gwas_report",
+      "input_types": {
+        "stats": "expression.diff_table.tsv"
+      },
+      "output_types": {
+        "html": "report.html"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from_node": "assoc",
+      "from_output": "diff",
+      "to_node": "report",
+      "to_input": "stats"
+    }
+  ],
+  "parameter_sweeps": {
+    "assoc.p_threshold": [
+      1e-5,
+      5e-8
+    ]
+  }
+}

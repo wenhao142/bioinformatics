@@ -1,6 +1,10 @@
 import csv
 import os
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd()))
+from workflow.platform_tools import resolve_tool_command
 
 configfile: "config/config.yaml"
 
@@ -30,6 +34,9 @@ FASTQ_DIR = "data/fastq"
 QC_DIR = "qc/fastqc"
 BAM_DIR = "bam"
 TARGETS = config.get("target_regions", [{"name": "ALL", "interval": None}])
+SRA_CONFIG = config.get("sra_bin", "")
+PREFETCH_CMD = resolve_tool_command("prefetch", SRA_CONFIG)
+FASTQ_DUMP_CMD = resolve_tool_command("fasterq-dump", SRA_CONFIG)
 
 rule all:
     input:
@@ -41,10 +48,10 @@ rule prefetch_sra:
     output:
         f"{SRA_DIR}/{{acc}}/{{acc}}.sra"
     params:
-        sra_bin=config.get("sra_bin", "prefetch"),
+        prefetch_cmd=PREFETCH_CMD,
         max_size="500G"
     shell:
-        "{params.sra_bin}/prefetch --max-size {params.max_size} --output-directory " + SRA_DIR + " {wildcards.acc}"
+        "{params.prefetch_cmd} --max-size {params.max_size} --output-directory " + SRA_DIR + " {wildcards.acc}"
 
 rule fasterq_dump:
     input:
@@ -53,14 +60,14 @@ rule fasterq_dump:
         fastq1=f"{FASTQ_DIR}/{{acc}}_1.fastq.gz",
         fastq2=f"{FASTQ_DIR}/{{acc}}_2.fastq.gz"
     params:
-        sra_bin=config.get("sra_bin", "fasterq-dump"),
+        fasterq_cmd=FASTQ_DUMP_CMD,
         tmp="tmp/{acc}",
         extra=config["params"].get("fasterq_dump", "--split-files")
     threads: config["threads"].get("fastq", 4)
     shell:
         (
             "mkdir -p {params.tmp} " + FASTQ_DIR + " && "
-            "{params.sra_bin}/fasterq-dump {params.extra} --threads {threads} --temp {params.tmp} {input} --outdir " + FASTQ_DIR + " && "
+            "{params.fasterq_cmd} {params.extra} --threads {threads} --temp {params.tmp} {input} --outdir " + FASTQ_DIR + " && "
             "gzip -f " + FASTQ_DIR + "/{wildcards.acc}_1.fastq && gzip -f " + FASTQ_DIR + "/{wildcards.acc}_2.fastq"
         )
 

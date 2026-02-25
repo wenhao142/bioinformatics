@@ -14,7 +14,7 @@ def reset_in_memory_state(monkeypatch):
     monkeypatch.setenv("VARIANTS_USE_DB", "false")
     monkeypatch.setenv("AUTH_USE_DB", "false")
 
-    from api import audit, auth, causal, datasets, literature, omics, plugins, rbac, runs, variants
+    from api import audit, auth, causal, datasets, literature, omics, plugins, rbac, runs, variants, workflows
 
     auth.reset_auth_store_for_tests()
 
@@ -34,9 +34,8 @@ def reset_in_memory_state(monkeypatch):
     runs._RUN_RESULTS.clear()
     causal._CAUSAL_RUNS.clear()
     causal._CAUSAL_RESULTS.clear()
-    plugins._MANIFESTS.clear()
-    plugins._PLUGIN_RUNS.clear()
-    plugins._PLUGIN_RESULTS.clear()
+    plugins.reset_plugin_state_for_tests()
+    workflows.reset_workflow_store_for_tests()
     audit._EVENTS.clear()
 
     if audit._STORE and hasattr(audit._STORE, "conn"):

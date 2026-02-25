@@ -31,6 +31,7 @@ Config (`config/menopause_ad.yaml`):
 - `gse_ids`: GSE3492, E-GEOD-2208, GSE97760 (female AD blood).
 - `designs`: columns to use as group labels; edit if GEO field names differ.
 - `menopause_sets`: which studies build the menopause signature (defaults: GSE3492, E-GEOD-2208).
+- `python_bin`: cross-platform Python command/path (default `python`).
 
 Run:
 ```bash
@@ -50,6 +51,9 @@ Notes:
 ## WGS/finemap scaffold (unchanged but pared to chr6/14)
 - Main Snakefile: `workflow/Snakefile`
 - Config: `config/config.yaml`; sample manifest: `samples.tsv`
+- Cross-platform tool config:
+  - set `sra_bin` to empty to use PATH tools
+  - or set `sra_bin` to a directory containing `prefetch` + `fasterq-dump` (or `.exe` on Windows)
 - Steps: prefetch SRA → FASTQ → FastQC → BWA-MEM2 → markdup → GATK HaplotypeCaller (gVCF) → PLINK region → GCTA/FINEMAP placeholders.
 - To rerun alignment you’d need full FASTQs; currently removed to save space. Use `scripts/stream_call.sh` + CRAM URL to avoid local alignment.
 
@@ -163,6 +167,9 @@ docker compose -f infra/docker-compose.yml up -d --build web
 - Register endpoint: `POST /plugins/register` (admin only)
 - List/query:
   - `GET /plugins`
+  - `GET /plugins/canonical-types` (canonical data type registry)
+  - `GET /plugins/search?q=...&tag=...&enabled=...`
+  - `GET /plugins/adapters`
   - `GET /plugins/{plugin_id}`
 - Manifest fields:
   - `plugin_id`, `name`, `version`, `image`
@@ -171,9 +178,12 @@ docker compose -f infra/docker-compose.yml up -d --build web
   - `enabled`, `tags`, `description`
 - Validation rules (MVP):
   - `version` uses semver-like format (`x.y.z`)
+  - image must be pinned (`:latest` is rejected)
   - `input_schema` and `output_schema` must be object schemas with non-empty `properties`
   - `required` fields must reference existing properties
   - duplicate `plugin_id` is rejected
+  - adapter plugins must include `adapter` spec with known canonical types
+  - deprecated plugins require `deprecation_message` and cannot be executed
 
 ## Plugin runner (T6.2)
 - Run endpoint: `POST /plugins/{plugin_id}/run`
@@ -187,7 +197,36 @@ docker compose -f infra/docker-compose.yml up -d --build web
 - Docker mode toggle:
   - set `PLUGIN_RUNNER_ALLOW_DOCKER=true`
 - Stored run metadata:
-  - `engine`, `image`, `project_id`, `input_hash`, `result_hash`, `counts`
+  - `engine`, `image`, `plugin_version`, `project_id`, `input_hash`, `params_hash`, `result_hash`
+  - `container_image_digest`, `tool_versions`, `execution` timing, log tails, `counts`
+
+## Workflow engine API (DAG)
+- Import workflow: `POST /workflows/import`
+- Validate workflow: `POST /workflows/{workflow_id}/validate`
+- Execution plan/topological order: `GET /workflows/{workflow_id}/plan`
+- Export workflow JSON: `GET /workflows/{workflow_id}/export`
+- Parameter sweep expansion: `POST /workflows/{workflow_id}/sweeps/expand`
+- Distributed execution (sweep-aware): `POST /workflows/{workflow_id}/execute/distributed`
+- Distributed run lookup: `GET /workflows/runs/{run_id}`
+- Cloud export/import:
+  - `POST /workflows/{workflow_id}/cloud/export`
+  - `POST /workflows/cloud/import/{workflow_id}`
+- List workflows: `GET /workflows`
+
+## Workflow templates
+- Templates are stored in `workflow/templates/`:
+  - `wgs_template.json`
+  - `rnaseq_template.json`
+  - `gwas_template.json`
+  - `eqtl_template.json`
+  - `multiomics_template.json`
+- Each template can be imported via `POST /workflows/import`.
+
+## Wrapper plugins
+- Built-in wrapper tags supported by plugin runner:
+  - `snakemake-wrapper`
+  - `nextflow-wrapper`
+- Wrapper plugins return planned command previews (safe default) and are executed via plugin run API.
 
 ## Method management UI (T6.3)
 - Route: `http://localhost:13100/`
@@ -221,11 +260,23 @@ docker compose -f infra/docker-compose.yml up -d --build web
   - optional model override when mode is `auto`
   - fallback warning is shown when cloud LLM is unavailable and offline template is used
 
+## Workflow Builder UI
+- Route: `http://localhost:13100/workflow-builder`
+- Capabilities:
+  - drag-and-drop tool palette to workflow canvas
+  - node-level parameter/input/output JSON configuration
+  - edge composition with port validation hints
+  - save/validate workflow via workflow engine API
+  - run distributed execution and monitor run summary
+  - export reproducibility report as markdown
+
 ## Account management (Auth)
 - Login endpoint: `POST /auth/login`
 - Admin-only account creation endpoint: `POST /auth/register`
   - payload: `email`, `password` (>= 8 chars), `role` (`admin` | `analyst` | `viewer`)
+  - if `role` is omitted, default is `viewer` (least privilege)
 - List accounts endpoint (admin only): `GET /auth/users`
+  - response contains `email` + `role` only (no password hash exposure)
 - Web UI:
   - `Session` panel includes email/password login
   - account creation form is available after admin login
@@ -243,6 +294,7 @@ powershell -ExecutionPolicy Bypass -File .\infra\demo_smoke.ps1
 - What the script does (end-to-end, offline-capable):
   - starts/updates docker stack
   - logs in and obtains a token
+  - uploads raw demo FASTQ + BAM to dataset storage
   - uploads demo VCF + expression table
   - runs evidence ranking + causal scoring
   - generates research directions

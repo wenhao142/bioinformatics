@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api import auth, rbac, audit, causal, datasets, variants, omics, evidence, plugins, runs, literature, report, research
+from api import auth, rbac, audit, causal, datasets, variants, omics, evidence, plugins, runs, literature, report, research, workflows
 
 app = FastAPI(title="AD Locus Evidence API")
 
@@ -27,6 +27,7 @@ app.include_router(causal.router)
 app.include_router(report.router)
 app.include_router(literature.router)
 app.include_router(research.router)
+app.include_router(workflows.router)
 
 
 @app.get("/health")

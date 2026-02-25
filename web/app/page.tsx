@@ -653,6 +653,9 @@ export default function Home() {
           <p className="hero-kicker">AD Multi-Omics Locus Evidence Platform</p>
           <h1 className="hero-title">Analysis Console</h1>
           <p className="hero-note">Manage uploads, run statistical methods, and control LLM summary mode in one page.</p>
+          <p className="hero-note" style={{ marginTop: 6 }}>
+            <a href="/workflow-builder">Open Workflow Builder</a>
+          </p>
         </div>
         <div className={`health-pill ${apiStatus === "ok" ? "health-pill-ok" : "health-pill-warn"}`}>API health: {apiStatus}</div>
       </header>

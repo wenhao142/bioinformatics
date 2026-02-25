@@ -1,0 +1,34 @@
+{
+  "workflow_id": "template.wgs",
+  "nodes": [
+    {
+      "node_id": "align",
+      "plugin_id": "bwa_align",
+      "input_types": {
+        "reads": "reads.fastq.gz"
+      },
+      "output_types": {
+        "bam": "align.bam"
+      }
+    },
+    {
+      "node_id": "call",
+      "plugin_id": "gatk_call",
+      "input_types": {
+        "bam": "align.bam"
+      },
+      "output_types": {
+        "vcf": "variants.vcf.gz"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from_node": "align",
+      "from_output": "bam",
+      "to_node": "call",
+      "to_input": "bam"
+    }
+  ],
+  "parameter_sweeps": {}
+}

@@ -21,7 +21,7 @@ ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@example.com")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "password")
 DEFAULT_USER_PASSWORD = os.getenv("DEFAULT_USER_PASSWORD", "password")
 PASSWORD_ROUNDS = int(os.getenv("PASSWORD_HASH_ROUNDS", "240000"))
-VALID_ROLES = {"admin"}
+VALID_ROLES = {"admin", "analyst", "viewer"}
 
 
 def _hash_password(password: str, salt: str | None = None) -> str:
@@ -65,7 +65,7 @@ class MemoryUserStore:
         self.users[email.lower()] = {"email": email, "password_hash": password_hash, "role": role}
 
     def list_users(self) -> list[dict[str, str]]:
-        rows = [dict(row) for row in self.users.values()]
+        rows = [{"email": row["email"], "role": row["role"]} for row in self.users.values()]
         rows.sort(key=lambda item: item["email"])
         return rows
 
@@ -187,7 +187,7 @@ class LoginRequest(BaseModel):
 class RegisterRequest(BaseModel):
     email: str
     password: str
-    role: str = "admin"
+    role: str = "viewer"
 
 
 class TokenResponse(BaseModel):
@@ -212,7 +212,7 @@ def login(req: LoginRequest):
     user = USER_STORE.get_user(req.email)
     if not user or not _verify_password(req.password, user["password_hash"]):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-    token = create_token(req.email, user["role"])
+    token = create_token(user["email"], user["role"])
     return TokenResponse(access_token=token, expires_in=JWT_EXPIRE_SECONDS)
 
 
@@ -222,7 +222,11 @@ def current_user(credentials: HTTPAuthorizationCredentials = Security(security))
         payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
     except jwt.PyJWTError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-    return {"email": payload.get("sub"), "role": payload.get("role")}
+    email = payload.get("sub")
+    role = payload.get("role")
+    if not isinstance(email, str) or not isinstance(role, str) or role not in VALID_ROLES:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+    return {"email": email, "role": role}
 
 
 @router.get("/me")
@@ -235,14 +239,19 @@ def register(req: RegisterRequest, user=Depends(current_user)):
     if user["role"] != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
 
-    role = "admin"
+    email = req.email.strip()
+    role = req.role.strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required")
+    if role not in VALID_ROLES:
+        raise HTTPException(status_code=400, detail=f"Role must be one of: {', '.join(sorted(VALID_ROLES))}")
     if len(req.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
-    created = USER_STORE.create_user(req.email.strip(), _hash_password(req.password), role)
+    created = USER_STORE.create_user(email, _hash_password(req.password), role)
     if not created:
         raise HTTPException(status_code=409, detail="User already exists")
-    return {"email": req.email.strip(), "role": role}
+    return {"email": email, "role": role}
 
 
 @router.get("/users")

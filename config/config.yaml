@@ -1,5 +1,9 @@
 project: ad_sex_finemap
-sra_bin: "./tools/sratoolkit.3.3.0-mac-arm64/bin"
+# Cross-platform:
+# - leave empty to use tools from PATH
+# - or set to a directory containing `prefetch` and `fasterq-dump` (or .exe on Windows)
+# - or set command/path directly in each environment
+sra_bin: ""
 samples_tsv: "samples.tsv"
 ref:
   fasta: "ref/GRCh38.chr6_14.fa"
