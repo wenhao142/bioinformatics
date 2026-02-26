@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 type Health = { status: string };
 
@@ -16,28 +17,6 @@ type CausalRunResponse = {
   result: { gene_scores: GeneScore[] };
 };
 
-type PluginManifest = {
-  plugin_id: string;
-  name: string;
-  enabled: boolean;
-  image: string;
-  tags: string[];
-};
-
-type PluginRun = {
-  run_id: string;
-  created_at: number;
-  engine: string;
-  counts: { ranked_genes: number; ranked_loci: number };
-};
-
-type PluginCompareResult = {
-  overlap_genes: string[];
-  only_left_genes: string[];
-  only_right_genes: string[];
-  score_deltas: Array<{ gene: string; left_score: number; right_score: number; delta: number }>;
-};
-
 type ResearchSummaryResult = {
   mode: string;
   summary: string;
@@ -49,7 +28,7 @@ type ResearchSummaryResult = {
 };
 
 type MethodRunResult = {
-  kind: "evidence" | "causal" | "plugin";
+  kind: "evidence" | "causal";
   runId: string;
   selectedMethod: string;
   topGenes: GeneScore[];
@@ -85,35 +64,16 @@ function normalizeGenes(raw: string): string[] {
 }
 
 export default function Home() {
+  const router = useRouter();
   const [apiStatus, setApiStatus] = useState<string>("checking...");
   const [token, setToken] = useState<string>("");
-  const [authEmail, setAuthEmail] = useState<string>("admin@example.com");
-  const [authPassword, setAuthPassword] = useState<string>("password");
-  const [authLoading, setAuthLoading] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [newUserEmail, setNewUserEmail] = useState<string>("");
-  const [newUserPassword, setNewUserPassword] = useState<string>("");
-  const [registerLoading, setRegisterLoading] = useState(false);
-  const [registerError, setRegisterError] = useState<string | null>(null);
-  const [registerMessage, setRegisterMessage] = useState<string | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   const [region, setRegion] = useState<string>("chr1:1-1000");
   const [projectId, setProjectId] = useState<string>("demo-project");
 
-  const [plugins, setPlugins] = useState<PluginManifest[]>([]);
-  const [pluginsLoading, setPluginsLoading] = useState(false);
-  const [pluginsError, setPluginsError] = useState<string | null>(null);
-  const [selectedPluginId, setSelectedPluginId] = useState<string>("");
-  const [pluginRuns, setPluginRuns] = useState<PluginRun[]>([]);
-  const [pluginRunsLoading, setPluginRunsLoading] = useState(false);
-  const [pluginRunsError, setPluginRunsError] = useState<string | null>(null);
-  const [leftRunId, setLeftRunId] = useState<string>("");
-  const [rightRunId, setRightRunId] = useState<string>("");
-  const [compareLoading, setCompareLoading] = useState(false);
-  const [compareError, setCompareError] = useState<string | null>(null);
-  const [compareResult, setCompareResult] = useState<PluginCompareResult | null>(null);
-
   const [variantFile, setVariantFile] = useState<File | null>(null);
   const [exprFile, setExprFile] = useState<File | null>(null);
+  const [rawDataFile, setRawDataFile] = useState<File | null>(null);
   const [uploadLoading, setUploadLoading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
@@ -149,167 +109,36 @@ export default function Home() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const stored = window.localStorage.getItem("ad_api_token");
-    if (stored) setToken(stored);
-  }, []);
+    if (stored) {
+      setToken(stored);
+      setAuthReady(true);
+      return;
+    }
+    setAuthReady(true);
+    router.replace("/login");
+  }, [router]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || !authReady) return;
     if (!token) {
       window.localStorage.removeItem("ad_api_token");
       return;
     }
     window.localStorage.setItem("ad_api_token", token);
-  }, [token]);
-
-  const loginWithPassword = async () => {
-    setAuthLoading(true);
-    setAuthError(null);
-    try {
-      const response = await fetch(`${apiBase}/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: authEmail, password: authPassword }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(typeof payload?.detail === "string" ? payload.detail : `Login failed (${response.status})`);
-      }
-      const accessToken = typeof payload?.access_token === "string" ? payload.access_token : "";
-      if (!accessToken) {
-        throw new Error("Login response missing token");
-      }
-      setToken(accessToken);
-    } catch (error: any) {
-      setAuthError(error?.message || "Login failed");
-    } finally {
-      setAuthLoading(false);
-    }
-  };
+  }, [token, authReady]);
 
   const logoutSession = () => {
     setToken("");
-    setAuthError(null);
+    router.replace("/login");
   };
 
-  const registerUser = async () => {
-    if (!authHeaders) {
-      setRegisterError("Please sign in as admin first.");
-      return;
-    }
-    setRegisterLoading(true);
-    setRegisterError(null);
-    setRegisterMessage(null);
-    try {
-      const email = newUserEmail.trim();
-      if (!email) {
-        throw new Error("New user email is required");
-      }
-      if (newUserPassword.length < 8) {
-        throw new Error("Password must be at least 8 characters");
-      }
-      const response = await fetch(`${apiBase}/auth/register`, {
-        method: "POST",
-        headers: { ...authHeaders, "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password: newUserPassword }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(typeof payload?.detail === "string" ? payload.detail : `Register failed (${response.status})`);
-      }
-      setRegisterMessage(`Created account: ${payload.email} (${payload.role})`);
-      setNewUserEmail("");
-      setNewUserPassword("");
-    } catch (error: any) {
-      setRegisterError(error?.message || "Register failed");
-    } finally {
-      setRegisterLoading(false);
-    }
-  };
-
-  const loadPlugins = useCallback(async () => {
-    if (!authHeaders) {
-      setPlugins([]);
-      setSelectedPluginId("");
-      return;
-    }
-    setPluginsLoading(true);
-    setPluginsError(null);
-    try {
-      const response = await fetch(`${apiBase}/plugins`, { headers: authHeaders });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(typeof payload?.detail === "string" ? payload.detail : `Request failed (${response.status})`);
-      }
-      const rows = Array.isArray(payload?.plugins) ? (payload.plugins as PluginManifest[]) : [];
-      setPlugins(rows);
-      if (rows.length > 0 && !rows.find((row) => row.plugin_id === selectedPluginId)) {
-        setSelectedPluginId(rows[0].plugin_id);
-      }
-    } catch (error: any) {
-      setPluginsError(error?.message || "Failed to load plugins");
-    } finally {
-      setPluginsLoading(false);
-    }
-  }, [apiBase, authHeaders, selectedPluginId]);
-
-  const loadPluginRuns = useCallback(
-    async (pluginId: string) => {
-      if (!authHeaders || !pluginId) {
-        setPluginRuns([]);
-        setLeftRunId("");
-        setRightRunId("");
-        return;
-      }
-      setPluginRunsLoading(true);
-      setPluginRunsError(null);
-      setCompareError(null);
-      setCompareResult(null);
-      try {
-        const response = await fetch(`${apiBase}/plugins/${encodeURIComponent(pluginId)}/runs`, {
-          headers: authHeaders,
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(typeof payload?.detail === "string" ? payload.detail : `Request failed (${response.status})`);
-        }
-        const rows = Array.isArray(payload?.runs) ? (payload.runs as PluginRun[]) : [];
-        setPluginRuns(rows);
-        setLeftRunId(rows[0]?.run_id ?? "");
-        setRightRunId(rows[1]?.run_id ?? rows[0]?.run_id ?? "");
-      } catch (error: any) {
-        setPluginRunsError(error?.message || "Failed to load plugin runs");
-      } finally {
-        setPluginRunsLoading(false);
-      }
-    },
-    [apiBase, authHeaders],
-  );
-
-  useEffect(() => {
-    void loadPlugins();
-  }, [loadPlugins]);
-
-  useEffect(() => {
-    if (!selectedPluginId) {
-      setPluginRuns([]);
-      return;
-    }
-    void loadPluginRuns(selectedPluginId);
-  }, [loadPluginRuns, selectedPluginId]);
-
-  const analysisMethodOptions = useMemo(() => {
-    const pluginOptions = plugins
-      .filter((plugin) => plugin.enabled)
-      .map((plugin) => ({
-        value: `plugin:${plugin.plugin_id}`,
-        label: `Plugin: ${plugin.name} (${plugin.plugin_id})`,
-      }));
-    return [
+  const analysisMethodOptions = useMemo(
+    () => [
       { value: "evidence-rank", label: "Baseline Evidence Rank" },
       { value: "causal-score", label: "Causal Score" },
-      ...pluginOptions,
-    ];
-  }, [plugins]);
+    ],
+    [],
+  );
 
   useEffect(() => {
     const exists = analysisMethodOptions.some((item) => item.value === analysisMethod);
@@ -318,149 +147,20 @@ export default function Home() {
     }
   }, [analysisMethod, analysisMethodOptions]);
 
-  const togglePlugin = async (plugin: PluginManifest) => {
-    if (!authHeaders) return;
-    setPluginsError(null);
-    try {
-      const response = await fetch(`${apiBase}/plugins/${encodeURIComponent(plugin.plugin_id)}/enabled`, {
-        method: "PATCH",
-        headers: { ...authHeaders, "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: !plugin.enabled }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(typeof payload?.detail === "string" ? payload.detail : `Request failed (${response.status})`);
-      }
-      setPlugins((prev) =>
-        prev.map((row) => (row.plugin_id === plugin.plugin_id ? { ...row, enabled: !plugin.enabled } : row)),
-      );
-    } catch (error: any) {
-      setPluginsError(error?.message || "Failed to toggle plugin");
-    }
-  };
-
-  const registerDefaultPlugin = async () => {
-    if (!authHeaders) return;
-    setPluginsError(null);
-    try {
-      const payload = {
-        plugin_id: "baseline-runner",
-        name: "Baseline Evidence Runner",
-        version: "1.0.0",
-        image: "builtin/baseline-evidence:1.0.0",
-        description: "Built-in baseline evidence ranking plugin for quick start.",
-        input_schema: {
-          type: "object",
-          properties: {
-            project_id: { type: "string" },
-            chr: { type: "string" },
-            start: { type: "integer" },
-            end: { type: "integer" },
-            top_n: { type: "integer" },
-          },
-          required: ["project_id", "chr", "start", "end"],
-          additionalProperties: true,
-        },
-        output_schema: {
-          type: "object",
-          properties: {
-            ranked_genes: { type: "array" },
-            ranked_loci: { type: "array" },
-            region: { type: "object" },
-            meta: { type: "object" },
-          },
-          required: ["ranked_genes", "ranked_loci"],
-          additionalProperties: true,
-        },
-        resources: { cpu_millicores: 1000, memory_mb: 1024, gpu: false },
-        enabled: true,
-        tags: ["baseline", "offline"],
-      };
-      const response = await fetch(`${apiBase}/plugins/register`, {
-        method: "POST",
-        headers: { ...authHeaders, "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok && response.status !== 409) {
-        throw new Error(typeof body?.detail === "string" ? body.detail : `Request failed (${response.status})`);
-      }
-      await loadPlugins();
-      setPluginsError(null);
-    } catch (error: any) {
-      setPluginsError(error?.message || "Failed to register default plugin");
-    }
-  };
-
-  const runPluginById = useCallback(
-    async (pluginId: string) => {
-      if (!authHeaders || !pluginId) {
-        throw new Error("Plugin and token are required");
-      }
-      const { chr, start, end } = parseRegion(region);
-      const response = await fetch(`${apiBase}/plugins/${encodeURIComponent(pluginId)}/run`, {
-        method: "POST",
-        headers: { ...authHeaders, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          project_id: projectId,
-          chr,
-          start,
-          end,
-          top_n: 5,
-          parameters: { selected_method: `plugin:${pluginId}` },
-        }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(typeof payload?.detail === "string" ? payload.detail : `Request failed (${response.status})`);
-      }
-      return payload;
-    },
-    [apiBase, authHeaders, projectId, region],
-  );
-
-  const runPluginFromManagement = async () => {
-    if (!selectedPluginId) return;
-    setPluginRunsError(null);
-    try {
-      await runPluginById(selectedPluginId);
-      await loadPluginRuns(selectedPluginId);
-    } catch (error: any) {
-      setPluginRunsError(error?.message || "Failed to run plugin");
-    }
-  };
-
-  const compareRuns = async () => {
-    if (!authHeaders || !selectedPluginId || !leftRunId || !rightRunId) return;
-    setCompareLoading(true);
-    setCompareError(null);
-    setCompareResult(null);
-    try {
-      const response = await fetch(`${apiBase}/plugins/${encodeURIComponent(selectedPluginId)}/compare`, {
-        method: "POST",
-        headers: { ...authHeaders, "Content-Type": "application/json" },
-        body: JSON.stringify({ left_run_id: leftRunId, right_run_id: rightRunId }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(typeof payload?.detail === "string" ? payload.detail : `Request failed (${response.status})`);
-      }
-      setCompareResult(payload as PluginCompareResult);
-    } catch (error: any) {
-      setCompareError(error?.message || "Failed to compare runs");
-    } finally {
-      setCompareLoading(false);
-    }
-  };
-
-  const uploadFile = async (kind: "variants" | "expr") => {
+  const uploadFile = async (kind: "variants" | "expr" | "raw") => {
     if (!authHeaders) {
       setUploadError("API token required");
       return;
     }
-    const file = kind === "variants" ? variantFile : exprFile;
+    const file = kind === "variants" ? variantFile : kind === "expr" ? exprFile : rawDataFile;
     if (!file) {
-      setUploadError(kind === "variants" ? "Please choose a VCF file." : "Please choose an expression TSV file.");
+      if (kind === "variants") {
+        setUploadError("Please choose a VCF file.");
+      } else if (kind === "expr") {
+        setUploadError("Please choose an expression TSV file.");
+      } else {
+        setUploadError("Please choose a raw bioinformatics file.");
+      }
       return;
     }
     setUploadLoading(true);
@@ -472,7 +172,9 @@ export default function Home() {
       const endpoint =
         kind === "variants"
           ? `${apiBase}/variants/ingest?project_id=${encodeURIComponent(projectId)}`
-          : `${apiBase}/omics/expr/upload`;
+          : kind === "expr"
+            ? `${apiBase}/omics/expr/upload`
+            : `${apiBase}/datasets/upload?project_id=${encodeURIComponent(projectId)}`;
       const response = await fetch(endpoint, { method: "POST", headers: authHeaders, body: form });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -480,8 +182,11 @@ export default function Home() {
       }
       if (kind === "variants") {
         setUploadMessage(`VCF uploaded. Ingested ${payload.ingested ?? 0} variants.`);
-      } else {
+      } else if (kind === "expr") {
         setUploadMessage(`Expression table uploaded. Ingested ${payload.ingested ?? 0} rows.`);
+      } else {
+        const uploadedName = payload?.dataset?.filename ?? file.name;
+        setUploadMessage(`Raw dataset uploaded: ${uploadedName}`);
       }
     } catch (error: any) {
       setUploadError(error?.message || "Upload failed");
@@ -540,31 +245,6 @@ export default function Home() {
           topGenes: payload.result.gene_scores.slice(0, 5),
           reportUrl: `${apiBase}/report/${encodeURIComponent(projectId)}/${encodeURIComponent(payload.run.run_id)}`,
         });
-        return;
-      }
-      if (analysisMethod.startsWith("plugin:")) {
-        const pluginId = analysisMethod.slice("plugin:".length);
-        if (!pluginId) {
-          throw new Error("Plugin ID is missing");
-        }
-        const payload = await runPluginById(pluginId);
-        const run = payload?.run;
-        const result = payload?.result;
-        const topGenes = Array.isArray(result?.ranked_genes)
-          ? result.ranked_genes.slice(0, 5).map((row: any, idx: number) => ({
-              gene: String(row?.gene ?? "NA"),
-              score: Number(row?.score ?? 0),
-              rank: Number(row?.rank ?? idx + 1),
-            }))
-          : [];
-        setMethodRunResult({
-          kind: "plugin",
-          runId: String(run?.run_id ?? "unknown"),
-          selectedMethod: analysisMethod,
-          topGenes,
-          reportUrl: null,
-        });
-        await loadPluginRuns(pluginId);
         return;
       }
       throw new Error("Unsupported method");
@@ -644,6 +324,17 @@ export default function Home() {
     }
   };
 
+  if (!authReady || !token) {
+    return (
+      <main className="analysis-page">
+        <section style={{ gridColumn: "1 / -1", padding: "1rem", border: "1px solid #ddd", borderRadius: 8 }}>
+          <h2 style={{ margin: 0 }}>Checking session...</h2>
+          <p style={{ margin: "0.5rem 0 0" }}>Redirecting to login page.</p>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="analysis-page">
       <div className="ambient-shape shape-a" />
@@ -657,52 +348,19 @@ export default function Home() {
             <a href="/workflow-builder">Open Workflow Builder</a>
           </p>
         </div>
-        <div className={`health-pill ${apiStatus === "ok" ? "health-pill-ok" : "health-pill-warn"}`}>API health: {apiStatus}</div>
+        <div className="hero-actions">
+          <button onClick={logoutSession} type="button">
+            Logout
+          </button>
+          <div className={`health-pill ${apiStatus === "ok" ? "health-pill-ok" : "health-pill-warn"}`}>API health: {apiStatus}</div>
+        </div>
       </header>
 
       <section style={{ padding: "1rem", border: "1px solid #ddd", borderRadius: 8, display: "grid", gap: "0.6rem" }}>
         <h2 style={{ margin: 0 }}>Session</h2>
-        <div style={{ display: "grid", gap: "0.45rem", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
-          <input value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} placeholder="email" />
-          <input type="password" value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} placeholder="password" />
-          <button onClick={() => void loginWithPassword()} disabled={authLoading}>
-            {authLoading ? "Signing In..." : token ? "Re-login" : "Sign In"}
-          </button>
-          <button onClick={logoutSession} disabled={!token}>
-            Logout
-          </button>
-        </div>
-        {authError ? <p style={{ margin: 0, color: "#b42318" }}>{authError}</p> : null}
         <p style={{ margin: 0, fontSize: 12, color: "#4d626e" }}>
-          {token ? "Logged in. Token is stored in browser localStorage." : "Not logged in."}
+          Logged in. Token is stored in browser localStorage.
         </p>
-        <div
-          style={{
-            display: "grid",
-            gap: "0.45rem",
-            gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
-            border: "1px solid #d6dfe4",
-            borderRadius: 10,
-            padding: "0.55rem",
-          }}
-        >
-          <input
-            value={newUserEmail}
-            onChange={(event) => setNewUserEmail(event.target.value)}
-            placeholder="new user email"
-          />
-          <input
-            type="password"
-            value={newUserPassword}
-            onChange={(event) => setNewUserPassword(event.target.value)}
-            placeholder="new user password"
-          />
-          <button onClick={() => void registerUser()} disabled={registerLoading || !token}>
-            {registerLoading ? "Creating..." : "Create Account"}
-          </button>
-        </div>
-        {registerError ? <p style={{ margin: 0, color: "#b42318" }}>{registerError}</p> : null}
-        {registerMessage ? <p style={{ margin: 0, color: "#14532d" }}>{registerMessage}</p> : null}
         <input value={region} onChange={(event) => setRegion(event.target.value)} placeholder="chr:start-end" />
         <input value={projectId} onChange={(event) => setProjectId(event.target.value)} placeholder="project id" />
       </section>
@@ -724,6 +382,17 @@ export default function Home() {
           </label>
           <button disabled={uploadLoading || !exprFile} onClick={() => void uploadFile("expr")}>
             {uploadLoading ? "Uploading..." : "Upload Expression"}
+          </button>
+          <label>
+            Raw Bio File (FASTA/GTF/FASTQ/BAM/etc.)
+            <input
+              type="file"
+              accept=".fasta,.fa,.fna,.gtf,.gff,.gff3,.fastq,.fq,.fastq.gz,.fq.gz,.bam,.cram,.sam,.tsv,.csv,text/plain,application/gzip,application/octet-stream"
+              onChange={(e) => setRawDataFile(e.target.files?.[0] || null)}
+            />
+          </label>
+          <button disabled={uploadLoading || !rawDataFile} onClick={() => void uploadFile("raw")}>
+            {uploadLoading ? "Uploading..." : "Upload Raw Dataset"}
           </button>
         </div>
         {uploadError ? <p style={{ margin: 0, color: "#b42318" }}>{uploadError}</p> : null}
@@ -832,117 +501,6 @@ export default function Home() {
         ) : null}
       </section>
 
-      <section style={{ padding: "1rem", border: "1px solid #ddd", borderRadius: 8 }}>
-        <h2 style={{ marginTop: 0 }}>Method Management (T6.3)</h2>
-        <p style={{ marginTop: 0 }}>Enable/disable plugin methods and compare method run outputs.</p>
-        {pluginsError ? <p style={{ color: "#b42318" }}>{pluginsError}</p> : null}
-        {pluginsLoading ? (
-          <p>Loading plugins...</p>
-        ) : (
-          <div style={{ display: "grid", gap: "0.5rem" }}>
-            {plugins.map((plugin) => (
-              <div
-                key={plugin.plugin_id}
-                style={{
-                  border: "1px solid #d0d7de",
-                  borderRadius: 8,
-                  padding: "0.6rem",
-                  display: "grid",
-                  gap: "0.35rem",
-                }}
-              >
-                <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
-                  <strong>{plugin.name}</strong>
-                  <code>{plugin.plugin_id}</code>
-                  <span>{plugin.enabled ? "Enabled" : "Disabled"}</span>
-                </div>
-                <small>{plugin.image}</small>
-                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-                  <button onClick={() => setSelectedPluginId(plugin.plugin_id)}>Select</button>
-                  <button onClick={() => void togglePlugin(plugin)}>{plugin.enabled ? "Disable" : "Enable"}</button>
-                </div>
-              </div>
-            ))}
-            {plugins.length === 0 ? (
-              <div style={{ display: "grid", gap: "0.5rem" }}>
-                <p style={{ margin: 0 }}>No plugins registered.</p>
-                <button onClick={() => void registerDefaultPlugin()}>Register Default Baseline Plugin</button>
-              </div>
-            ) : null}
-          </div>
-        )}
-
-        <div style={{ marginTop: "1rem", borderTop: "1px solid #eee", paddingTop: "0.75rem" }}>
-          <p style={{ margin: "0 0 0.5rem" }}>
-            <strong>Selected plugin:</strong> {selectedPluginId || "none"}
-          </p>
-          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.5rem" }}>
-            <button disabled={!selectedPluginId} onClick={() => void runPluginFromManagement()}>
-              Run Selected Plugin
-            </button>
-            <button disabled={!selectedPluginId} onClick={() => void loadPluginRuns(selectedPluginId)}>
-              Refresh Runs
-            </button>
-          </div>
-          {pluginRunsError ? <p style={{ color: "#b42318" }}>{pluginRunsError}</p> : null}
-          {pluginRunsLoading ? <p>Loading runs...</p> : null}
-          {pluginRuns.length > 0 ? (
-            <>
-              <div style={{ display: "grid", gap: "0.4rem", maxWidth: 620 }}>
-                <label>
-                  Left run
-                  <select value={leftRunId} onChange={(event) => setLeftRunId(event.target.value)}>
-                    {pluginRuns.map((run) => (
-                      <option key={`left-${run.run_id}`} value={run.run_id}>
-                        {run.run_id} ({run.engine})
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Right run
-                  <select value={rightRunId} onChange={(event) => setRightRunId(event.target.value)}>
-                    {pluginRuns.map((run) => (
-                      <option key={`right-${run.run_id}`} value={run.run_id}>
-                        {run.run_id} ({run.engine})
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button disabled={!leftRunId || !rightRunId || compareLoading} onClick={() => void compareRuns()}>
-                  {compareLoading ? "Comparing..." : "Compare Runs"}
-                </button>
-              </div>
-              {compareError ? <p style={{ color: "#b42318" }}>{compareError}</p> : null}
-              {compareResult ? (
-                <div style={{ marginTop: "0.75rem" }}>
-                  <p style={{ margin: "0.25rem 0" }}>
-                    <strong>Overlap genes:</strong> {compareResult.overlap_genes.join(", ") || "none"}
-                  </p>
-                  <p style={{ margin: "0.25rem 0" }}>
-                    <strong>Only left:</strong> {compareResult.only_left_genes.join(", ") || "none"}
-                  </p>
-                  <p style={{ margin: "0.25rem 0" }}>
-                    <strong>Only right:</strong> {compareResult.only_right_genes.join(", ") || "none"}
-                  </p>
-                  <p style={{ margin: "0.5rem 0 0.25rem" }}>
-                    <strong>Top score deltas:</strong>
-                  </p>
-                  <ul style={{ marginTop: 0 }}>
-                    {compareResult.score_deltas.slice(0, 5).map((row) => (
-                      <li key={`delta-${row.gene}`}>
-                        {row.gene}: {row.left_score.toFixed(3)} vs {row.right_score.toFixed(3)} (d {row.delta.toFixed(3)})
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-            </>
-          ) : (
-            <p>No runs for selected plugin yet.</p>
-          )}
-        </div>
-      </section>
       <style jsx>{`
         .analysis-page {
           --bg: #edf2f4;
@@ -1009,6 +567,11 @@ export default function Home() {
           justify-content: space-between;
           gap: 14px;
           align-items: flex-start;
+        }
+        .hero-actions {
+          display: grid;
+          gap: 8px;
+          justify-items: end;
         }
         .hero-kicker {
           margin: 0 0 4px;

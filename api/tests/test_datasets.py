@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from fastapi.testclient import TestClient
 
 from api.main import app
@@ -58,3 +59,41 @@ def test_list_datasets_scope(monkeypatch, tmp_path):
     names = [d["filename"] for d in resp_viewer.json()["datasets"]]
     assert "b.txt" in names
     assert "a.txt" not in names
+
+
+def test_upload_generated_bio_sample_files(monkeypatch, tmp_path):
+    monkeypatch.setenv("USE_MINIO", "false")
+    monkeypatch.setenv("LOCAL_DATASET_DIR", str(tmp_path))
+    client = TestClient(app)
+
+    token = get_token(client, "admin@example.com", "password")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    root = Path(__file__).resolve().parents[2]
+    sample_dir = root / "infra" / "sample_data"
+    sample_files = [
+        "demo_reference.fasta",
+        "demo_annotation.gtf",
+        "demo_reads_R1.fastq",
+        "demo_reads_R2.fastq",
+        "demo_samplesheet.tsv",
+        "demo_counts.tsv",
+        "demo_diff.tsv",
+    ]
+
+    uploaded = []
+    for name in sample_files:
+        path = sample_dir / name
+        assert path.exists(), f"Missing sample file: {path}"
+        with path.open("rb") as handle:
+            resp = client.post(
+                "/datasets/upload?project_id=demo-bio",
+                files={"file": (name, handle.read())},
+                headers=headers,
+            )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["dataset"]["filename"] == name
+        uploaded.append(body["dataset"]["filename"])
+
+    assert set(uploaded) == set(sample_files)

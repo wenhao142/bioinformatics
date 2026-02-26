@@ -1,0 +1,72 @@
+<html><head><meta charset='utf-8'><title>Analysis Report</title><style>body{font-family:Segoe UI,Arial,sans-serif;padding:24px;line-height:1.4}pre{white-space:pre-wrap;background:#f8fafc;border:1px solid #dbe2ea;padding:16px;border-radius:8px}</style></head><body><h1>Analysis Report</h1><pre># Analysis Report
+
+## Summary
+- Project: `demo-project`
+- Run ID: `run-1`
+- Kind: `evidence_rank`
+- Created by: `admin@example.com`
+- Created at (UTC): `2026-02-26T01:46:27.527792+00:00`
+
+## Top Genes
+| Rank | Gene | Score |
+| --- | --- | ---: |
+| 1 | GENE1 | 7.5031 |
+| 2 | GENE2 | 5.8709 |
+
+## Top Loci Evidence
+| Item | Chr | Start/Pos | End/Alt | Score |
+| --- | --- | --- | --- | ---: |
+| GENE1 | chr1 | 80 | 140 | 7.5031 |
+| GENE2 | chr1 | 700 | 760 | 5.8709 |
+
+## Research Direction (Inference)
+- Disease: `Alzheimer disease`
+- Inference label: `inference`
+- Summary: Offline template summary for Alzheimer disease: candidate genes are GENE1, GENE2. Interpret as inference pending literature and lab validation.
+
+### Hypotheses
+- H1 (GENE1): GENE1 may modulate Alzheimer disease risk through transcriptomic and variant-linked mechanisms.
+- H2 (GENE2): GENE2 may modulate Alzheimer disease risk through transcriptomic and variant-linked mechanisms.
+
+### Experiment Plans
+- E1 (GENE1): Targeted validation plan for GENE1
+- E2 (GENE2): Targeted validation plan for GENE2
+
+### Evidence Citations
+| ID | Type | Label |
+| --- | --- | --- |
+| C1 | input-gene | Requested gene GENE1 |
+| C2 | input-gene | Requested gene GENE2 |
+
+## Run Metadata
+```json
+{
+  &quot;counts&quot;: {
+    &quot;omics_rows&quot;: 4,
+    &quot;variants_in_region&quot;: 5
+  },
+  &quot;input_hashes&quot;: {
+    &quot;omics_table_sha256&quot;: &quot;aa88c368a69613b37028d76f2d11cf7445970d21c5f6cc7b342e664519aba7d0&quot;,
+    &quot;variants_region_sha256&quot;: &quot;17e75bf844a2ef69cbf57dde22800967cb25fb8a89005f9aa5470fa9d64c6072&quot;
+  },
+  &quot;params&quot;: {
+    &quot;chr&quot;: &quot;chr1&quot;,
+    &quot;end&quot;: 1000,
+    &quot;start&quot;: 1,
+    &quot;top_n&quot;: 5
+  },
+  &quot;rerun_of&quot;: null,
+  &quot;result_hash&quot;: &quot;bc6037a8339a03b9fd8985ffdb0804381cc3785ddbaaae0c04b973b0e6a465b6&quot;,
+  &quot;selected_method&quot;: &quot;evidence-rank&quot;,
+  &quot;signature_hash&quot;: &quot;eee334fc8cdf77fa7a9dd2420690a36149e1d1b2f7f9c760fd69672456797b50&quot;,
+  &quot;stable_with_previous&quot;: false,
+  &quot;tool_versions&quot;: {
+    &quot;fastapi&quot;: &quot;0.110.0&quot;,
+    &quot;pydantic&quot;: &quot;2.6.1&quot;,
+    &quot;pyjwt&quot;: &quot;2.8.0&quot;,
+    &quot;python&quot;: &quot;3.11.14&quot;,
+    &quot;scoring&quot;: &quot;evidence-v1&quot;
+  }
+}
+```
+</pre></body></html>

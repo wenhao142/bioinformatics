@@ -229,12 +229,8 @@ docker compose -f infra/docker-compose.yml up -d --build web
 - Wrapper plugins return planned command previews (safe default) and are executed via plugin run API.
 
 ## Method management UI (T6.3)
-- Route: `http://localhost:13100/`
-- Section: **Method Management (T6.3)**
-- Capabilities:
-  - enable/disable registered methods (plugin toggle)
-  - trigger method runs from selected region/project
-  - compare two runs from the same method and inspect overlap / score deltas
+- Plugin method management has been moved to the workflow builder flow.
+- Route: `http://localhost:13100/workflow-builder`
 
 ## UI statistical method selector (T8.1)
 - Route: `http://localhost:13100/`
@@ -250,6 +246,7 @@ docker compose -f infra/docker-compose.yml up -d --build web
 - Capabilities:
   - upload your own VCF file via browser
   - upload your own expression TSV via browser
+  - upload raw bioinformatics files (for example FASTA/GTF/FASTQ/BAM) via browser to dataset storage
   - see ingestion status directly in UI (no CLI required)
 
 ## UI LLM method selector (T8.3)

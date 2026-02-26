@@ -76,6 +76,12 @@ $vcfPath = Join-Path $scriptDir "example.vcf"
 $exprPath = Join-Path $scriptDir "expr.tsv"
 $fastqPath = Join-Path $scriptDir "raw_demo.fastq"
 $bamPath = Join-Path $scriptDir "raw_demo.bam"
+$sampleDataDir = Join-Path $scriptDir "sample_data"
+$fastaPath = Join-Path $sampleDataDir "demo_reference.fasta"
+$gtfPath = Join-Path $sampleDataDir "demo_annotation.gtf"
+$pairR1Path = Join-Path $sampleDataDir "demo_reads_R1.fastq"
+$pairR2Path = Join-Path $sampleDataDir "demo_reads_R2.fastq"
+$sampleSheetPath = Join-Path $sampleDataDir "demo_samplesheet.tsv"
 if (-not (Test-Path $vcfPath)) {
     throw "Missing demo VCF: $vcfPath"
 }
@@ -87,6 +93,21 @@ if (-not (Test-Path $fastqPath)) {
 }
 if (-not (Test-Path $bamPath)) {
     throw "Missing raw BAM demo file: $bamPath"
+}
+if (-not (Test-Path $fastaPath)) {
+    throw "Missing demo FASTA file: $fastaPath"
+}
+if (-not (Test-Path $gtfPath)) {
+    throw "Missing demo GTF file: $gtfPath"
+}
+if (-not (Test-Path $pairR1Path)) {
+    throw "Missing demo FASTQ R1 file: $pairR1Path"
+}
+if (-not (Test-Path $pairR2Path)) {
+    throw "Missing demo FASTQ R2 file: $pairR2Path"
+}
+if (-not (Test-Path $sampleSheetPath)) {
+    throw "Missing demo sample sheet: $sampleSheetPath"
 }
 
 Write-Host "Uploading raw FASTQ dataset..."
@@ -111,6 +132,27 @@ if ($LASTEXITCODE -ne 0) {
 $uploadBam = $uploadBamRaw | ConvertFrom-Json
 if (-not $uploadBam.dataset.id) {
     throw "Raw BAM dataset upload failed: $uploadBamRaw"
+}
+
+Write-Host "Uploading bio sample bundle (FASTA/GTF/paired FASTQ/sample sheet)..."
+$sampleUploads = @(
+    @{ path = $fastaPath; contentType = "text/plain" },
+    @{ path = $gtfPath; contentType = "text/plain" },
+    @{ path = $pairR1Path; contentType = "text/plain" },
+    @{ path = $pairR2Path; contentType = "text/plain" },
+    @{ path = $sampleSheetPath; contentType = "text/tab-separated-values" }
+)
+foreach ($item in $sampleUploads) {
+    $uploadRaw = & curl.exe -sS -X POST "$ApiBase/datasets/upload?project_id=$ProjectId" `
+        -H $authHeader `
+        -F "file=@$($item.path);type=$($item.contentType)"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Sample dataset upload command failed: $($item.path)"
+    }
+    $uploadObj = $uploadRaw | ConvertFrom-Json
+    if (-not $uploadObj.dataset.id) {
+        throw "Sample dataset upload failed: $uploadRaw"
+    }
 }
 
 Write-Host "Uploading demo VCF..."

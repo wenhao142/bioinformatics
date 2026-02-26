@@ -1,0 +1,3 @@
+chrDemo1	demo	exon	1	20	.	+	.	gene_id "GENE_DEMO_A"; transcript_id "TX_DEMO_A";
+chrDemo1	demo	exon	21	40	.	+	.	gene_id "GENE_DEMO_A"; transcript_id "TX_DEMO_A";
+chrDemo2	demo	exon	5	25	.	-	.	gene_id "GENE_DEMO_B"; transcript_id "TX_DEMO_B";

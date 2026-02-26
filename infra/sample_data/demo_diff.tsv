@@ -1,0 +1,3 @@
+gene	logfc	pval	adj_pval
+GENE_DEMO_A	0.84	0.002	0.01
+GENE_DEMO_B	-0.36	0.04	0.08

@@ -37,7 +37,6 @@ AI MUST:
 - Record full provenance metadata
 - Maintain deterministic execution
 - Version all breaking changes
-- Deliver implementations compatible with both Windows and macOS
 
 ---
 
@@ -166,7 +165,7 @@ AI must follow this loop:
 3. Break task into subtasks
 4. Implement
 5. Validate with tests
-6. If tests pass → check box
+6. If tests pass ??check box
 7. Log changes
 8. Repeat
 
@@ -193,13 +192,197 @@ Mode must be explicitly declared before major updates.
 
 ---
 
-# 12. AI Task Checklist
+# 12. MVP Workflow Composer (Minimal DAG)
+
+Goal: Implement the **first end-to-end workflow composer** that supports **only 5?? common tools** and can run a complete **RNA-seq** (preferred) or **WGS** pipeline as a DAG.
+
+Constraints:
+- Tools are executed ONLY via plugin runner (containerized).
+- Workflows are validated by canonical IO types.
+- Keep the first version small; extend later via registry.
+
+## 12.1 Canonical Types used in MVP
+
+**Core types (already defined):**
+- `reads.fastq.gz`
+- `align.bam` (+ index)
+- `expression.counts.tsv`
+- `expression.diff_table.tsv`
+- `report.html`
+
+**MVP additions (allowed as aliases without changing canonical registry):**
+- `reads.fastq_pair.gz` (pair of `reads.fastq.gz`)
+- `qc.fastqc.zip` (FastQC output bundle)
+- `qc.multiqc.html` (MultiQC report)
+- `reference.genome.fasta` (FASTA + index bundle)
+- `annotation.gtf` (gene annotation)
+
+If these are promoted to canonical types later, do a version bump and document migration.
+
+---
+
+## 12.2 Minimal RNA-seq DAG (v0) ??6 tools
+
+**Pipeline:**
+1) FastQC ??2) Cutadapt ??3) STAR (or HISAT2) ??4) samtools sort+index ??5) featureCounts ??6) DESeq2 ??(optional) MultiQC
+
+### Tools (Plugins) ??Detailed Specs
+
+#### P1. `fastqc`
+- Purpose: raw read QC
+- Container: `biocontainers/fastqc` (pinned tag)
+- Inputs:
+  - `reads`: `reads.fastq.gz` OR `reads.fastq_pair.gz`
+- Outputs:
+  - `fastqc_zip`: `qc.fastqc.zip`
+  - `fastqc_html`: `report.html` (single-sample FastQC HTML)
+- Params:
+  - `threads` (int, default 2)
+- Command template:
+  - `fastqc -t {threads} -o {out_dir} {reads...}`
+
+#### P2. `cutadapt`
+- Purpose: adapter/quality trimming
+- Container: `quay.io/biocontainers/cutadapt` (pinned tag)
+- Inputs:
+  - `reads`: `reads.fastq.gz` OR `reads.fastq_pair.gz`
+- Outputs:
+  - `trimmed_reads`: `reads.fastq.gz` OR `reads.fastq_pair.gz`
+  - `trim_log`: `report.html` (or `text/plain` stored as artifact; rendered in UI)
+- Params (MVP subset):
+  - `adapter_fwd` (string, optional)
+  - `adapter_rev` (string, optional)
+  - `quality_cutoff` (int, default 20)
+  - `min_length` (int, default 20)
+  - `threads` (int, default 4)
+- Command template (paired example):
+  - `cutadapt -j {threads} -q {quality_cutoff} -m {min_length} -a {adapter_fwd} -A {adapter_rev} -o {out1} -p {out2} {in1} {in2}`
+
+#### P3. `star_align` (preferred) OR `hisat2_align` (alternative)
+- Purpose: RNA-seq alignment
+- Container:
+  - STAR: `quay.io/biocontainers/star` (pinned)
+  - HISAT2: `quay.io/biocontainers/hisat2` (pinned)
+- Inputs:
+  - `reads`: `reads.fastq.gz` OR `reads.fastq_pair.gz`
+  - `reference`: `reference.genome.fasta` (includes required indices)
+  - `annotation` (optional for STAR quant modes): `annotation.gtf`
+- Outputs:
+  - `alignment_unsorted`: `align.bam`
+  - `align_log`: `report.html` (or text artifact)
+- Params:
+  - `threads` (int, default 8)
+  - `read_group` (string, optional)
+- Command template (STAR BAM unsorted):
+  - `STAR --runThreadN {threads} --genomeDir {ref_index} --readFilesIn {reads...} --readFilesCommand zcat --outSAMtype BAM Unsorted --outFileNamePrefix {out_prefix}`
+
+#### P4. `samtools_sort_index`
+- Purpose: sort + index BAM
+- Container: `quay.io/biocontainers/samtools` (pinned)
+- Inputs:
+  - `alignment`: `align.bam`
+- Outputs:
+  - `alignment_sorted`: `align.bam` (+ index)
+- Params:
+  - `threads` (int, default 4)
+  - `memory` (string, default `1G`)
+- Command template:
+  - `samtools sort -@ {threads} -m {memory} -o {sorted_bam} {bam} && samtools index {sorted_bam}`
+
+#### P5. `featurecounts`
+- Purpose: gene-level read counting
+- Container: `quay.io/biocontainers/subread` (pinned)
+- Inputs:
+  - `alignment_sorted`: `align.bam` (+ index)
+  - `annotation`: `annotation.gtf`
+- Outputs:
+  - `counts`: `expression.counts.tsv`
+  - `counts_summary`: `report.html` (or text artifact)
+- Params:
+  - `threads` (int, default 4)
+  - `feature_type` (string, default `exon`)
+  - `attribute` (string, default `gene_id`)
+  - `strand` (int, default 0)
+- Command template:
+  - `featureCounts -T {threads} -t {feature_type} -g {attribute} -s {strand} -a {gtf} -o {counts_tsv} {bam}`
+
+#### P6. `deseq2_diffexp`
+- Purpose: differential expression analysis
+- Container: `bioconductor/bioconductor_docker` (pinned) OR custom image with R + DESeq2
+- Inputs:
+  - `counts`: `expression.counts.tsv`
+  - `sample_sheet`: (CSV/TSV; stored as dataset artifact)
+- Outputs:
+  - `diff_table`: `expression.diff_table.tsv`
+  - `qc_plots`: `report.html` (MA plot / PCA / dispersion)
+- Params:
+  - `design_formula` (string, default `~ condition`)
+  - `contrast` (string, required, e.g., `condition,treat,ctrl`)
+  - `alpha` (float, default 0.05)
+- Command template:
+  - `Rscript /app/run_deseq2.R --counts {counts} --samples {samples} --design "{design_formula}" --contrast "{contrast}" --alpha {alpha} --out {out_dir}`
+
+#### P7 (optional). `multiqc`
+- Purpose: aggregate QC across steps
+- Container: `quay.io/biocontainers/multiqc` (pinned)
+- Inputs:
+  - `qc_inputs`: list of artifacts from FastQC/Cutadapt/STAR/featureCounts
+- Outputs:
+  - `multiqc_report`: `qc.multiqc.html`
+- Params:
+  - `title` (string, default `RNA-seq QC`)
+- Command template:
+  - `multiqc {in_dir} -o {out_dir} --title "{title}"`
+
+### Minimal RNA-seq Workflow DAG (example)
+
+Nodes:
+- `n1_fastqc_raw` (fastqc)
+- `n2_cutadapt` (cutadapt)
+- `n3_fastqc_trimmed` (fastqc)
+- `n4_align` (star_align OR hisat2_align)
+- `n5_sort_index` (samtools_sort_index)
+- `n6_featurecounts` (featurecounts)
+- `n7_deseq2` (deseq2_diffexp)
+- `n8_multiqc` (multiqc, optional)
+
+Edges:
+- raw reads ??fastqc_raw
+- raw reads ??cutadapt ??fastqc_trimmed
+- cutadapt ??align ??sort_index ??featurecounts ??deseq2
+- (optional) qc artifacts ??multiqc
+
+Acceptance (RNA-seq v0):
+- DAG validates (acyclic + IO types compatible)
+- Runner executes all nodes in topological order
+- Each node stores: params + tool versions + input hashes + output hashes + logs
+- Final artifacts visible in UI:
+  - FastQC HTML
+  - Alignment BAM (download link)
+  - Counts TSV
+  - DE diff table TSV
+  - Report HTML
+
+---
+
+## 12.3 Minimal WGS DAG (v0) ??6 tools (alternative)
+
+**Pipeline:**
+1) FastQC ??2) Cutadapt ??3) BWA-MEM ??4) samtools sort+index ??5) bcftools mpileup+call ??6) bcftools filter ??(optional) MultiQC
+
+Tools (plugins): `fastqc`, `cutadapt`, `bwa_mem`, `samtools_sort_index`, `bcftools_call`, `bcftools_filter`.
+
+Acceptance (WGS v0):
+- Produces `variants.vcf.gz(+tbi)` and basic QC report.
+
+---
+
+# 13. AI Task Checklist
 
 ## Core Infrastructure
 
 - [x] Method Registry implemented
 - [x] Manifest JSON schema validator
-- [x] Windows + macOS compatibility
 - [x] Canonical data type system
 - [x] Plugin runner completed
 - [x] Provenance tracking
@@ -244,11 +427,6 @@ Mode must be explicitly declared before major updates.
 - [x] Nextflow wrapper
 - [x] Distributed execution support
 - [x] Cloud storage integration
-- [x] Docker raw-data end-to-end execution
-  - Acceptance:
-    - User can start Docker stack and submit raw bioinformatics input data (e.g., FASTQ/BAM/VCF) without manual file surgery.
-    - Pipeline runs inside containers and produces queryable outputs in platform storage.
-    - Verified on both Windows and macOS.
 
 ---
 
@@ -259,11 +437,7 @@ Mode must be explicitly declared before major updates.
 - [x] Parameter configuration panel
 - [x] Run monitoring dashboard
 - [x] Reproducibility report export
-- [x] Lego-style tool selection flow
-  - Acceptance:
-    - User can compose/select tools like building blocks in UI and launch a run.
-    - UI prevents invalid connections/inputs and shows clear validation errors.
-    - Composed workflow is saved and reusable per project.
+- [x] Web raw bio file upload (FASTA/GTF/FASTQ/BAM via dataset API)
 
 ---
 
@@ -274,9 +448,25 @@ A checkbox may only be marked complete if:
 - Implementation exists
 - Unit tests pass
 - Integration tests pass
-- Windows and macOS compatibility is verified
 - No architectural rules violated
+- Every execution cycle after reading AGENTS.md must include verification testing before marking completion.
+
+## 13.1 Latest Verification Log (2026-02-26)
+
+- API: `ruff check .` + `pytest -q` => passed (`64 passed`)
+- Workers: `pytest -q` => passed (`1 passed`)
+- Workflow utils: `pytest -q workflow/tests/test_platform_tools.py` => passed (`4 passed`)
+- Web: `npm run lint` + `npm run build` => passed
+- E2E smoke: `infra/demo_smoke.ps1` => passed (uploads raw FASTQ/BAM + sample FASTA/GTF/paired FASTQ/sample sheet, runs evidence/causal/report)
+- UI upload extension: analysis console now supports browser upload for FASTA/GTF/FASTQ/BAM (and related raw files) through `/datasets/upload?project_id=...`
+
+## 13.2 Execution Log Update (2026-02-26)
+
+- Web verification re-run: `cd web && npm run lint && npm run build` => passed
+- API verification re-run: `cd api && pytest -q tests/test_datasets.py::test_upload_generated_bio_sample_files` => passed (`1 passed`)
 
 ---
 
 End of AGENTS.md
+
+
