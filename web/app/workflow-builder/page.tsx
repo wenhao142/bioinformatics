@@ -588,23 +588,41 @@ export default function WorkflowBuilderPage() {
       return false;
     }
     const compatible = resolveCompatiblePorts(fromNodeId, toNodeId);
-    if (!compatible) {
-      setError(`No compatible data type between ${fromNodeId} and ${toNodeId}.`);
-      return false;
+    const fallbackFromOutput = Object.keys(parsedNodeTypes.outputs[fromNodeId] || {})[0];
+    const fallbackToInput = Object.keys(parsedNodeTypes.inputs[toNodeId] || {})[0];
+    let edgeDraft: EdgeDraft;
+    let warnIncompatible = false;
+    if (compatible) {
+      edgeDraft = {
+        from_node: fromNodeId,
+        from_output: compatible.from_output,
+        to_node: toNodeId,
+        to_input: compatible.to_input,
+      };
+    } else {
+      if (!fallbackFromOutput || !fallbackToInput) {
+        setError(`Cannot connect ${fromNodeId} -> ${toNodeId}: missing output/input ports.`);
+        return false;
+      }
+      edgeDraft = {
+        from_node: fromNodeId,
+        from_output: fallbackFromOutput,
+        to_node: toNodeId,
+        to_input: fallbackToInput,
+      };
+      warnIncompatible = true;
     }
-    const edgeDraft: EdgeDraft = {
-      from_node: fromNodeId,
-      from_output: compatible.from_output,
-      to_node: toNodeId,
-      to_input: compatible.to_input,
-    };
     const sig = edgeSignature(edgeDraft);
     if (edges.some((e) => edgeSignature(e) === sig)) {
       setError(`Duplicate edge: ${sig}`);
       return false;
     }
     setEdges((prev) => [...prev, edgeDraft]);
-    setStatus(`Edge added (${compatible.type_id}).`);
+    if (warnIncompatible) {
+      setStatus(`Edge added as draft (${fromNodeId} -> ${toNodeId}). Type mismatch will be shown in Validation.`);
+    } else {
+      setStatus(`Edge added (${compatible.type_id}).`);
+    }
     return true;
   }
 
