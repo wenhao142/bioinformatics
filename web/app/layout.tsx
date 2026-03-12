@@ -3,7 +3,7 @@ import { ReactNode } from "react";
 
 export const metadata = {
   title: "AD Locus Evidence Platform",
-  description: "AD multi-omics scaffold",
+  description: "AD multi-omics workflow, locus review, and evidence console",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

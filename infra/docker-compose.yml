@@ -7,9 +7,11 @@ services:
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:18000}
         NEXT_PUBLIC_GENE_TRACK_URL: ${GENE_TRACK_URL:-http://localhost:19000/igv/genes.sample.bed}
+        NEXT_PUBLIC_DEFAULT_LOGIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:18000}
       NEXT_PUBLIC_GENE_TRACK_URL: ${GENE_TRACK_URL:-http://localhost:19000/igv/genes.sample.bed}
+      NEXT_PUBLIC_DEFAULT_LOGIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
     ports:
       - "${WEB_PORT:-13000}:3000"
     depends_on:
@@ -33,6 +35,8 @@ services:
       AUTH_USE_DB: ${AUTH_USE_DB:-true}
     ports:
       - "18000:8000"
+    volumes:
+      - ../results:/app/results
     depends_on:
       - postgres
       - minio

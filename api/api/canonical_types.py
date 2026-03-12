@@ -35,6 +35,16 @@ _CANONICAL_TYPES: list[dict[str, Any]] = [
         "description": "HTML report artifact",
         "extensions": [".html"],
     },
+    {
+        "id": "reference.genome.fasta",
+        "description": "Reference genome FASTA",
+        "extensions": [".fasta", ".fa", ".fna"],
+    },
+    {
+        "id": "annotation.gtf",
+        "description": "Gene annotation file",
+        "extensions": [".gtf", ".gff", ".gff3"],
+    },
 ]
 
 _CANONICAL_IDS = {entry["id"] for entry in _CANONICAL_TYPES}

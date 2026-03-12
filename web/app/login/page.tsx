@@ -1,25 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { KeyRound, ShieldPlus, UserCircle2 } from "lucide-react";
 
-const API_PORT_FALLBACK = 18000;
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { resolveApiBase } from "@/lib/api-base";
+import { clearStoredToken, TOKEN_STORAGE_KEY } from "@/lib/session";
 
-function resolveApiBase(): string {
-  const envUrl = process.env.NEXT_PUBLIC_API_URL;
-  if (envUrl) return envUrl;
-  if (typeof window !== "undefined") {
-    const { protocol, hostname } = window.location;
-    return `${protocol}//${hostname}:${API_PORT_FALLBACK}`;
-  }
-  return `http://localhost:${API_PORT_FALLBACK}`;
-}
+const DEFAULT_LOGIN_EMAIL = process.env.NEXT_PUBLIC_DEFAULT_LOGIN_EMAIL || "";
 
 export default function LoginPage() {
   const router = useRouter();
   const apiBase = useMemo(() => resolveApiBase(), []);
-  const [email, setEmail] = useState("admin@example.com");
-  const [password, setPassword] = useState("password");
+  const [email, setEmail] = useState(DEFAULT_LOGIN_EMAIL);
+  const [password, setPassword] = useState("");
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,16 +27,6 @@ export default function LoginPage() {
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [createMessage, setCreateMessage] = useState<string | null>(null);
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const existing = window.localStorage.getItem("ad_api_token");
-    if (existing) {
-      setSessionToken(existing);
-    }
-    setReady(true);
-  }, []);
 
   const fetchLoginToken = async (adminEmail: string, adminPassword: string): Promise<string> => {
     const response = await fetch(`${apiBase}/auth/login`, {
@@ -61,7 +50,9 @@ export default function LoginPage() {
     setError(null);
     try {
       const accessToken = await fetchLoginToken(email, password);
-      window.localStorage.setItem("ad_api_token", accessToken);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(TOKEN_STORAGE_KEY, accessToken);
+      }
       setSessionToken(accessToken);
       router.replace("/");
     } catch (err: any) {
@@ -71,14 +62,14 @@ export default function LoginPage() {
     }
   };
 
-  const switchAccount = () => {
+  const clearSession = () => {
     if (typeof window !== "undefined") {
-      window.localStorage.removeItem("ad_api_token");
+      clearStoredToken();
     }
     setSessionToken(null);
-    setCreateMessage(null);
-    setCreateError(null);
     setError(null);
+    setCreateError(null);
+    setCreateMessage(null);
   };
 
   const createAccount = async () => {
@@ -93,7 +84,6 @@ export default function LoginPage() {
       if (createPassword.length < 8) {
         throw new Error("New user password must be at least 8 characters");
       }
-
       const adminToken = sessionToken ?? (await fetchLoginToken(email, password));
       const response = await fetch(`${apiBase}/auth/register`, {
         method: "POST",
@@ -107,6 +97,7 @@ export default function LoginPage() {
       if (!response.ok) {
         throw new Error(typeof payload?.detail === "string" ? payload.detail : `Create account failed (${response.status})`);
       }
+      setSessionToken(adminToken);
       setCreateMessage(`Created account: ${payload.email} (${payload.role})`);
       setCreateEmail("");
       setCreatePassword("");
@@ -117,257 +108,86 @@ export default function LoginPage() {
     }
   };
 
-  if (!ready) {
-    return (
-      <main className="login-page">
-        <section className="login-shell">
-          <h1>Checking session...</h1>
-        </section>
-      </main>
-    );
-  }
-
   return (
-    <main className="login-page">
-      <div className="ambient-shape shape-a" />
-      <div className="ambient-shape shape-b" />
-
-      <section className="login-shell reveal">
-        <p className="hero-kicker">AD Multi-Omics Locus Evidence Platform</p>
-        <h1 className="hero-title">Sign In</h1>
-        <p className="hero-note">Authenticate first, then enter the Analysis Console.</p>
-
-        {sessionToken ? (
-          <div className="token-box">
-            <p className="ok-text">An active session already exists on this browser.</p>
-            <div className="btn-row">
-              <button type="button" onClick={() => router.push("/")}>
-                Enter Analysis Console
-              </button>
-              <button type="button" onClick={switchAccount}>
-                Switch Account
-              </button>
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(208,234,228,0.8),_transparent_24%),linear-gradient(180deg,_#fcfcf9_0%,_#f5f3ed_100%)] px-4 py-8 text-foreground sm:px-6 lg:px-8">
+      <div className="mx-auto grid min-h-[calc(100vh-4rem)] max-w-6xl gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+        <Card className="border-border/80 bg-card/95 backdrop-blur">
+          <CardHeader className="space-y-4">
+            <Badge variant="secondary" className="w-fit">Intranet sign-in</Badge>
+            <CardTitle className="font-serif text-4xl leading-tight">Keep authentication separate from the work.</CardTitle>
+            <CardDescription className="max-w-xl text-base">
+              Login only unlocks the platform. Data upload, workflow design, and locus review each stay on their own page.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 text-sm text-muted-foreground">
+            <div className="rounded-xl border border-border bg-background/80 p-4">
+              <p className="mb-2 flex items-center gap-2 font-medium text-foreground"><UserCircle2 className="h-4 w-4 text-primary" />After login</p>
+              <p>`/` for console and analysis runs</p>
+              <p>`/workflow-builder` for raw upload and Snakemake blocks</p>
+              <p>`/locus/chr:start-end` for IGV and evidence review</p>
             </div>
-          </div>
-        ) : null}
+            <div className="rounded-xl border border-border bg-background/80 p-4">
+              <p className="mb-2 flex items-center gap-2 font-medium text-foreground"><KeyRound className="h-4 w-4 text-primary" />Current admin preset</p>
+              <p>{DEFAULT_LOGIN_EMAIL || "No preset admin email configured"}</p>
+            </div>
+          </CardContent>
+        </Card>
 
-        <label>
-          Email
-          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email" />
-        </label>
-        <label>
-          Password
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="password"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !loading) {
-                void login();
-              }
-            }}
-          />
-        </label>
-        <button onClick={() => void login()} disabled={loading}>
-          {loading ? "Signing In..." : "Sign In"}
-        </button>
-        {error ? <p className="err-text">{error}</p> : null}
+        <div className="grid gap-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Sign in</CardTitle>
+              <CardDescription>Use the admin account or your own project account.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="email">Email</Label>
+                <Input id="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="password"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !loading) {
+                      void login();
+                    }
+                  }}
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => void login()} disabled={loading}>{loading ? "Signing in" : "Sign in"}</Button>
+                <Button variant="outline" onClick={clearSession}>Clear token</Button>
+              </div>
+              {error ? <p className="text-sm text-destructive">{error}</p> : null}
+            </CardContent>
+          </Card>
 
-        <div className="divider" />
-        <h2 className="sub-title">Create Account</h2>
-        <p className="hero-note">Use admin credentials above, then create a new user.</p>
-        <label>
-          New User Email
-          <input value={createEmail} onChange={(e) => setCreateEmail(e.target.value)} placeholder="new user email" />
-        </label>
-        <label>
-          New User Password
-          <input
-            type="password"
-            value={createPassword}
-            onChange={(e) => setCreatePassword(e.target.value)}
-            placeholder="new user password"
-          />
-        </label>
-        <button type="button" onClick={() => void createAccount()} disabled={createLoading}>
-          {createLoading ? "Creating..." : "Create Account"}
-        </button>
-        {createError ? <p className="err-text">{createError}</p> : null}
-        {createMessage ? <p className="ok-text">{createMessage}</p> : null}
-      </section>
-
-      <style jsx>{`
-        .login-page {
-          --bg: #edf2f4;
-          --surface: #ffffff;
-          --line: #ccd6dc;
-          --ink: #10222c;
-          --muted: #4d626e;
-          --teal: #0f7d76;
-          --orange: #c8611f;
-          min-height: 100vh;
-          display: grid;
-          place-items: center;
-          padding: 16px;
-          background: repeating-linear-gradient(
-              90deg,
-              rgba(255, 255, 255, 0.26),
-              rgba(255, 255, 255, 0.26) 1px,
-              transparent 1px,
-              transparent 26px
-            ),
-            repeating-linear-gradient(
-              0deg,
-              rgba(255, 255, 255, 0.26),
-              rgba(255, 255, 255, 0.26) 1px,
-              transparent 1px,
-              transparent 26px
-            ),
-            var(--bg);
-          color: var(--ink);
-          font-family: "IBM Plex Sans", "Noto Sans TC", "Segoe UI", sans-serif;
-          position: relative;
-          overflow: hidden;
-        }
-        .ambient-shape {
-          position: fixed;
-          width: 280px;
-          height: 280px;
-          border-radius: 999px;
-          pointer-events: none;
-          z-index: 0;
-          opacity: 0.18;
-          filter: blur(8px);
-        }
-        .shape-a {
-          top: -90px;
-          left: -70px;
-          background: #0f7d76;
-        }
-        .shape-b {
-          bottom: -100px;
-          right: -90px;
-          background: #c8611f;
-        }
-        .login-shell {
-          z-index: 1;
-          width: min(460px, 100%);
-          border: 1px solid var(--line);
-          border-radius: 18px;
-          padding: 18px;
-          background: var(--surface);
-          display: grid;
-          gap: 10px;
-        }
-        .hero-kicker {
-          margin: 0;
-          letter-spacing: 0.14em;
-          text-transform: uppercase;
-          font-size: 11px;
-          font-weight: 700;
-          color: var(--teal);
-        }
-        .hero-title {
-          margin: 0;
-          font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
-          font-size: clamp(30px, 4.6vw, 42px);
-          line-height: 1.03;
-          letter-spacing: 0.01em;
-        }
-        .hero-note {
-          margin: 0;
-          color: var(--muted);
-          font-size: 13px;
-        }
-        .sub-title {
-          margin: 0;
-          font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
-          font-size: 22px;
-          letter-spacing: 0.01em;
-        }
-        .token-box {
-          border: 1px solid #d6dfe4;
-          border-radius: 10px;
-          padding: 10px;
-          display: grid;
-          gap: 8px;
-          background: #f7fafb;
-        }
-        .btn-row {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 8px;
-        }
-        .divider {
-          height: 1px;
-          background: #d6dfe4;
-          margin: 6px 0;
-        }
-        label {
-          display: grid;
-          gap: 6px;
-          color: var(--muted);
-          font-size: 12px;
-          font-weight: 700;
-          letter-spacing: 0.02em;
-        }
-        input {
-          min-height: 42px;
-          border-radius: 10px;
-          border: 1px solid #c8d2d8;
-          background: #ffffff;
-          color: var(--ink);
-          padding: 8px 10px;
-          font-size: 14px;
-          font-family: "IBM Plex Sans", "Noto Sans TC", "Segoe UI", sans-serif;
-        }
-        input:focus {
-          outline: 2px solid #0f7d76;
-          outline-offset: 1px;
-          border-color: #0f7d76;
-        }
-        button {
-          min-height: 42px;
-          border-radius: 10px;
-          border: 1px solid transparent;
-          padding: 8px 12px;
-          cursor: pointer;
-          font-size: 13px;
-          font-weight: 700;
-          letter-spacing: 0.03em;
-          text-transform: uppercase;
-          background: var(--teal);
-          color: #ffffff;
-        }
-        button:disabled {
-          opacity: 0.55;
-          cursor: default;
-        }
-        .err-text {
-          margin: 0;
-          color: #b42318;
-          font-weight: 700;
-        }
-        .ok-text {
-          margin: 0;
-          color: #14532d;
-          font-weight: 700;
-        }
-        .reveal {
-          animation: rise 380ms ease both;
-        }
-        @keyframes rise {
-          from {
-            opacity: 0;
-            transform: translateY(8px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-      `}</style>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2"><ShieldPlus className="h-5 w-5 text-primary" />Create account</CardTitle>
+              <CardDescription>Admin only. This stays secondary to sign-in.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="create-email">New user email</Label>
+                <Input id="create-email" value={createEmail} onChange={(e) => setCreateEmail(e.target.value)} placeholder="new user email" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="create-password">New user password</Label>
+                <Input id="create-password" type="password" value={createPassword} onChange={(e) => setCreatePassword(e.target.value)} placeholder="minimum 8 characters" />
+              </div>
+              <Button variant="outline" onClick={() => void createAccount()} disabled={createLoading}>{createLoading ? "Creating" : "Create account"}</Button>
+              {createError ? <p className="text-sm text-destructive">{createError}</p> : null}
+              {createMessage ? <p className="text-sm text-emerald-700">{createMessage}</p> : null}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
     </main>
   );
 }

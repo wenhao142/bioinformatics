@@ -20,14 +20,17 @@ def test_upload_uses_local_when_disabled(tmp_path, monkeypatch):
     token = get_token(client, "admin@example.com", "password")
     resp = client.post(
         "/datasets/upload",
-        files={"file": ("hello.txt", b"hello-world")},
+        files={"file": ("reads.fastq", b"@read1\nACGT\n+\nFFFF\n")},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 200
     rec = resp.json()["dataset"]
-    assert rec["filename"] == "hello.txt"
+    assert rec["filename"] == "reads.fastq"
+    assert rec["input_role"] == "reads"
+    assert rec["canonical_type"] == "reads.fastq.gz"
+    assert rec["validation_status"] == "validated"
     # verify file written locally
-    saved = os.path.join(str(tmp_path), rec["sha256"], "hello.txt")
+    saved = os.path.join(str(tmp_path), rec["sha256"], "reads.fastq")
     assert os.path.exists(saved)
 
 
@@ -41,12 +44,12 @@ def test_list_datasets_scope(monkeypatch, tmp_path):
 
     client.post(
         "/datasets/upload",
-        files={"file": ("a.txt", b"aaa")},
+        files={"file": ("a.fastq", b"@a\nACGT\n+\nFFFF\n")},
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     client.post(
         "/datasets/upload",
-        files={"file": ("b.txt", b"bbb")},
+        files={"file": ("b.fastq", b"@b\nTGCA\n+\nFFFF\n")},
         headers={"Authorization": f"Bearer {viewer_token}"},
     )
 
@@ -57,8 +60,23 @@ def test_list_datasets_scope(monkeypatch, tmp_path):
     # viewer sees only own
     resp_viewer = client.get("/datasets", headers={"Authorization": f"Bearer {viewer_token}"})
     names = [d["filename"] for d in resp_viewer.json()["datasets"]]
-    assert "b.txt" in names
-    assert "a.txt" not in names
+    assert "b.fastq" in names
+    assert "a.fastq" not in names
+
+
+def test_upload_rejects_unsupported_raw_type(monkeypatch, tmp_path):
+    monkeypatch.setenv("USE_MINIO", "false")
+    monkeypatch.setenv("LOCAL_DATASET_DIR", str(tmp_path))
+    client = TestClient(app)
+
+    token = get_token(client, "admin@example.com", "password")
+    resp = client.post(
+        "/datasets/upload",
+        files={"file": ("notes.txt", b"not valid bio input\n")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Unsupported raw file type for workflow input"
 
 
 def test_upload_generated_bio_sample_files(monkeypatch, tmp_path):

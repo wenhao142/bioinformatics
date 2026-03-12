@@ -1,8 +1,8 @@
 # AGENTS.md
 
-# Autonomous Bioinformatics Workflow Engine
+# Snakemake Visual Workflow Console
 
-This document defines the full autonomous development specification for an AI-driven, plugin-based bioinformatics workflow platform.
+This document defines the development specification for an intranet-first bioinformatics workflow console centered on visualizing and running Snakemake pipelines.
 
 The AI agent must follow this document strictly.
 
@@ -10,14 +10,15 @@ The AI agent must follow this document strictly.
 
 # 1. System Vision
 
-Build a modular, extensible, reproducible bioinformatics workflow engine where:
+Build a modular, extensible, reproducible bioinformatics workflow console where:
 
-- Each bioinformatics tool is a plugin (building block)
-- Workflows are DAG-based compositions of plugins
-- Execution is containerized (Docker-first)
+- The primary user experience is a web-based drag-and-drop interface for Snakemake workflows
+- The first product goal is not a general workflow SaaS, but a focused internal console for biotech teams
+- The first workflow is a single end-to-end pipeline rendered as blocks with fixed ports
+- Execution is driven by Snakemake CLI, with generated `Snakefile` and config artifacts
 - All runs are reproducible
-- New tools can be added without modifying core logic
-- AI can autonomously extend the system
+- New tools can be added through structured tool definitions without rewriting the builder core
+- IGV is used as a result exploration surface, not as the orchestration engine
 
 ---
 
@@ -25,15 +26,19 @@ Build a modular, extensible, reproducible bioinformatics workflow engine where:
 
 AI MUST NOT:
 
-- Hardcode tool names in core logic
+- Treat IGV as part of the pipeline scheduler
+- Expose arbitrary user-defined ports in the MVP builder
+- Let users wire incompatible inputs/outputs manually in ways the platform cannot validate
 - Modify canonical data types without version bump
-- Bypass manifest validation
-- Execute tools outside container runner
+- Bypass workflow validation or Snakemake dry-run before execution
+- Execute tools outside the controlled runner path
 - Break backward compatibility
 
 AI MUST:
 
-- Use schema-driven validation
+- Use schema-driven validation for workflow JSON and tool definitions
+- Keep the first builder constrained to fixed tool cards and fixed I/O ports
+- Generate deterministic `Snakefile` and config outputs from the visual DAG
 - Record full provenance metadata
 - Maintain deterministic execution
 - Version all breaking changes
@@ -46,25 +51,25 @@ AI MUST:
 
 Responsible for:
 
-- Registering plugins
-- Validating plugin manifest JSON schema
-- Version control of plugins
-- Querying available tools
+- Storing tool definitions used by the visual builder
+- Validating tool definition schema
+- Version control of tool specs
+- Querying available blocks for the UI palette
 
 ## 3.2 Plugin Manifest Specification
 
-Each plugin must define:
+Each tool definition must define:
 
 - id
 - version (semantic versioning)
-- container_image (pinned tag)
+- execution backend (`snakemake-rule`, later `container-wrapper` if needed)
 - inputs (typed)
 - outputs (typed)
 - params_schema
-- resource requirements
-- execution command template
+- snakemake rule template or command template
+- UI metadata for labels and grouping
 
-Manifest must pass platform JSON schema validation.
+Definition must pass platform JSON schema validation.
 
 ---
 
@@ -96,20 +101,21 @@ Engine responsibilities:
 - Validate input/output compatibility
 - Resolve execution order (topological sort)
 - Support branching
-- Support parameter sweep mode
+- Generate `Snakefile` and config from validated graph
+- Run `snakemake -n` before real execution
 - Support workflow export/import JSON
 
 ---
 
 # 6. Execution Layer
 
-Plugin Runner must:
+Execution runner must:
 
-1. Pull container image
-2. Mount inputs
-3. Inject parameters
-4. Execute command
-5. Capture logs
+1. Materialize workflow JSON into `Snakefile`, config, and run directory
+2. Resolve input datasets and references
+3. Inject parameters into Snakemake config
+4. Execute `snakemake` in controlled mode
+5. Capture logs and exit code
 6. Collect outputs
 7. Compute output hashes
 
@@ -122,37 +128,128 @@ Execution must be isolated and reproducible.
 Each run must record:
 
 - Input dataset SHA256
-- Plugin ID + version
-- Container image digest
+- Tool IDs + versions used in the workflow
+- Snakemake version
+- Generated workflow artifact hashes
 - Parameter JSON
 - Output hashes
 - Execution timestamp
 
 Runs must be re-executable.
 
+## 7.1 Persistence Rules
+
+Workflow definitions and run results must not exist only in transient API memory.
+
+Required persistence targets:
+
+- Local filesystem on the deployed machine
+- PostgreSQL for queryable metadata and run indexing
+
+Minimum persistence behavior:
+
+- `Save workflow` must persist the workflow definition to PostgreSQL
+- Workflow export/import JSON must also be available on local disk
+- `Run workflow` must persist run metadata to PostgreSQL
+- Generated runtime artifacts must be stored on local disk
+- Result summaries shown in UI must be reconstructable from PostgreSQL + local artifacts
+
+Transient in-memory storage may be used only as a short-lived cache, never as the system of record.
+
+## 7.2 Local Artifact Requirements
+
+Completed or failed runs must write a local run directory containing at least:
+
+- generated `Snakefile`
+- generated config
+- stdout/stderr or tool logs
+- output file paths
+- reproducibility metadata
+
+The UI must make it clear where the run was saved locally.
+
+## 7.3 Database Requirements
+
+PostgreSQL must store at least:
+
+- workflow_id
+- project_id
+- created_by
+- workflow JSON
+- run_id
+- run status
+- local artifact paths
+- timestamps
+- summary metrics
+- provenance metadata
+
+The database layer is the canonical query source for saved workflows and prior runs.
+
+## 7.4 Cloud Execution Direction
+
+The system should support a future flow where saved workflows and selected inputs can be dispatched from the local console to a cloud execution environment.
+
+Design rules:
+
+- Local save and PostgreSQL persistence happen first
+- Cloud execution is an additional execution target, not a replacement for local persistence
+- Cloud submission must reference persisted workflow definitions and persisted input records
+- Cloud runs must return status and result references back to the local system
+- Local UI must be able to distinguish local runs vs cloud runs
+
 ---
 
-# 8. Adapter Plugin Pattern
+# 8. Adapter Pattern
 
 If new tools use incompatible formats:
 
-- Implement adapter plugin
+- Implement an adapter tool
 - Convert to canonical type
 - Do not alter core data model
 
 ---
 
-# 9. Advanced Workflow Support
+# 9. Product Scope
 
 System must support:
 
-- WGS pipelines
-- RNA-seq pipelines
-- GWAS pipelines
-- eQTL pipelines
-- Multi-omics integration
-- Snakemake wrapper plugin
-- Nextflow wrapper plugin
+- WGS pipeline visualization and execution first
+- RNA-seq as the next pipeline after WGS stabilizes
+- Result exploration through an IGV-based analysis workspace
+- Future statistical overlays inside the locus viewer
+
+System does not need, in the MVP:
+
+- A fully generic plugin marketplace
+- A public SaaS-style multi-tenant product shell
+- Nextflow parity before Snakemake execution is production-ready
+
+---
+
+# 9.1 Frontend Design Source
+
+For web UI redesign or visual refinement work, AI must treat the local `impeccable-style-universal/` folder as the primary design-guidance source.
+
+Scope:
+
+- Applies to `web/` UI structure, copy, layout, spacing, hierarchy, responsiveness, and interaction polish
+- Does not override backend architecture, bioinformatics workflow rules, provenance rules, or persistence requirements
+
+Required behavior:
+
+- Read the relevant guidance in `impeccable-style-universal/` before major UI redesign work
+- Prefer quieter, clearer, more restrained interfaces over loud or generic dashboard styling
+- Keep copy short and task-oriented
+- Adapt layouts for both desktop and mobile instead of designing desktop-only shells
+- Use the guidance as a refinement system, not as permission to add decorative UI that does not support the workflow
+
+Current preferred guidance themes:
+
+- quieter
+- adapt
+- polish
+
+If the UI direction from `impeccable-style-universal/` conflicts with explicit product workflow rules in this file, product workflow rules win.
 
 ---
 
@@ -170,6 +267,35 @@ AI must follow this loop:
 8. Repeat
 
 AI must not skip validation.
+
+Strict reporting rule:
+
+- Do not tell the user a change is complete until the relevant verification has passed locally.
+- If verification is still running, incomplete, timed out, or failed, say that directly instead of claiming success.
+- Report in this order only:
+  1. verification result
+  2. what changed
+- Never reverse that order.
+
+Minimum verification expectations:
+
+- Frontend change:
+  - type check
+  - lint
+  - build or runtime check when rendered behavior changed
+- Backend change:
+  - syntax/lint or targeted test
+  - targeted API check when behavior changed
+- Workflow or execution change:
+  - targeted run, dry-run, or artifact verification
+
+If a change is only partial, AI must say it is partial and continue until the verified state is clear.
+
+Additional required rule:
+
+- After any meaningful code, UI, workflow, demo-data, or test-flow change, AI must update `docs/WORKING_CONTEXT.md`.
+- `docs/WORKING_CONTEXT.md` must describe current product state, changed files, how to test, known issues, and the next recommended step.
+- `AGENTS.md` stores durable rules. `docs/WORKING_CONTEXT.md` stores current project state.
 
 ---
 
@@ -192,16 +318,70 @@ Mode must be explicitly declared before major updates.
 
 ---
 
-# 12. MVP Workflow Composer (Minimal DAG)
+# 12. MVP Visual Snakemake Builder
 
-Goal: Implement the **first end-to-end workflow composer** that supports **only 5?? common tools** and can run a complete **RNA-seq** (preferred) or **WGS** pipeline as a DAG.
+Goal: Implement the first end-to-end visual Snakemake builder that supports one real workflow with 5-7 common tools and can run it from the UI.
 
 Constraints:
-- Tools are executed ONLY via plugin runner (containerized).
-- Workflows are validated by canonical IO types.
-- Keep the first version small; extend later via registry.
+- The MVP UI is a fixed-node builder, not a generic plugin canvas.
+- Each block has fixed input/output ports defined by the platform.
+- The initial pipeline target is WGS variant calling.
+- Keep the first version small; extend later by adding more tool specs and templates.
 
-## 12.1 Canonical Types used in MVP
+## 12.1 Builder Model
+
+The builder is a thin web console over Snakemake, not a replacement workflow language.
+
+MVP rules:
+- Users drag predefined blocks from the palette onto a canvas.
+- Users may edit parameters, but not invent new ports or arbitrary execution semantics.
+- Connections are only allowed when canonical input and output types match.
+- The saved workflow JSON is transformed into `Snakefile` + config by the backend.
+- The first run action must support `dry-run` and `real run`.
+
+This is described as "fixed I/O ports, no generic plugin UI" because:
+- it reduces invalid states,
+- makes Snakemake generation deterministic,
+- keeps the first production feature understandable by non-programmers,
+- and still remains extensible by adding new tool definitions later.
+
+## 12.1.a Product UX Rules
+
+UI rules for the current product direction:
+
+- Show only fields and controls that are actively used in the current workflow.
+- Hide unfinished, unconnected, or speculative features from the main UI.
+- Keep copy short, direct, and understandable by non-engineering users.
+- The primary builder flow is: `upload raw -> build -> save -> run -> result`.
+- Do not mix login/session/account-switching controls into the main workflow workspace.
+- In the builder, prefer raw data upload over exposing intermediate artifacts that would confuse the workflow mental model.
+- Save actions must explain clearly where workflow definitions are stored.
+- Run result screens must show human-readable summaries first, raw JSON only on demand.
+- Run result screens must show where outputs were saved locally.
+
+## 12.1.b Input Validation Rules
+
+Workflow input handling must be strict.
+
+Required rules:
+
+- Upload success does not mean workflow compatibility.
+- The system must not treat any arbitrary uploaded file as a valid workflow input just because it was stored successfully.
+- Raw upload must validate:
+  - allowed file category for the selected workflow mode
+  - basic content or structure when practical
+- The UI must distinguish clearly between:
+  - file uploaded
+  - file validated for workflow use
+  - file bound to a workflow input
+- Workflow execution must fail before execution if required inputs are:
+  - missing
+  - unbound
+  - incompatible
+  - structurally invalid for the selected workflow
+- The system must not return a successful placeholder workflow result for invalid or unbound inputs.
+
+## 12.2 Canonical Types used in MVP
 
 **Core types (already defined):**
 - `reads.fastq.gz`
@@ -221,159 +401,78 @@ If these are promoted to canonical types later, do a version bump and document m
 
 ---
 
-## 12.2 Minimal RNA-seq DAG (v0) ??6 tools
+## 12.3 Minimal WGS DAG (v0) - primary MVP
 
-**Pipeline:**
-1) FastQC ??2) Cutadapt ??3) STAR (or HISAT2) ??4) samtools sort+index ??5) featureCounts ??6) DESeq2 ??(optional) MultiQC
+Pipeline:
+1. FastQC
+2. Cutadapt
+3. BWA-MEM
+4. samtools sort+index
+5. GATK HaplotypeCaller
+6. GATK GenotypeGVCFs or a simplified variant call step
+7. Optional report/QC aggregation
 
-### Tools (Plugins) ??Detailed Specs
+Tool blocks for MVP:
+- `fastqc`
+- `cutadapt`
+- `bwa_mem`
+- `samtools_sort_index`
+- `gatk_haplotypecaller`
+- `gatk_genotypegvcfs`
+- `variant_report` or `multiqc` (optional)
 
-#### P1. `fastqc`
-- Purpose: raw read QC
-- Container: `biocontainers/fastqc` (pinned tag)
-- Inputs:
-  - `reads`: `reads.fastq.gz` OR `reads.fastq_pair.gz`
-- Outputs:
-  - `fastqc_zip`: `qc.fastqc.zip`
-  - `fastqc_html`: `report.html` (single-sample FastQC HTML)
-- Params:
-  - `threads` (int, default 2)
-- Command template:
-  - `fastqc -t {threads} -o {out_dir} {reads...}`
-
-#### P2. `cutadapt`
-- Purpose: adapter/quality trimming
-- Container: `quay.io/biocontainers/cutadapt` (pinned tag)
-- Inputs:
-  - `reads`: `reads.fastq.gz` OR `reads.fastq_pair.gz`
-- Outputs:
-  - `trimmed_reads`: `reads.fastq.gz` OR `reads.fastq_pair.gz`
-  - `trim_log`: `report.html` (or `text/plain` stored as artifact; rendered in UI)
-- Params (MVP subset):
-  - `adapter_fwd` (string, optional)
-  - `adapter_rev` (string, optional)
-  - `quality_cutoff` (int, default 20)
-  - `min_length` (int, default 20)
-  - `threads` (int, default 4)
-- Command template (paired example):
-  - `cutadapt -j {threads} -q {quality_cutoff} -m {min_length} -a {adapter_fwd} -A {adapter_rev} -o {out1} -p {out2} {in1} {in2}`
-
-#### P3. `star_align` (preferred) OR `hisat2_align` (alternative)
-- Purpose: RNA-seq alignment
-- Container:
-  - STAR: `quay.io/biocontainers/star` (pinned)
-  - HISAT2: `quay.io/biocontainers/hisat2` (pinned)
-- Inputs:
-  - `reads`: `reads.fastq.gz` OR `reads.fastq_pair.gz`
-  - `reference`: `reference.genome.fasta` (includes required indices)
-  - `annotation` (optional for STAR quant modes): `annotation.gtf`
-- Outputs:
-  - `alignment_unsorted`: `align.bam`
-  - `align_log`: `report.html` (or text artifact)
-- Params:
-  - `threads` (int, default 8)
-  - `read_group` (string, optional)
-- Command template (STAR BAM unsorted):
-  - `STAR --runThreadN {threads} --genomeDir {ref_index} --readFilesIn {reads...} --readFilesCommand zcat --outSAMtype BAM Unsorted --outFileNamePrefix {out_prefix}`
-
-#### P4. `samtools_sort_index`
-- Purpose: sort + index BAM
-- Container: `quay.io/biocontainers/samtools` (pinned)
-- Inputs:
-  - `alignment`: `align.bam`
-- Outputs:
-  - `alignment_sorted`: `align.bam` (+ index)
-- Params:
-  - `threads` (int, default 4)
-  - `memory` (string, default `1G`)
-- Command template:
-  - `samtools sort -@ {threads} -m {memory} -o {sorted_bam} {bam} && samtools index {sorted_bam}`
-
-#### P5. `featurecounts`
-- Purpose: gene-level read counting
-- Container: `quay.io/biocontainers/subread` (pinned)
-- Inputs:
-  - `alignment_sorted`: `align.bam` (+ index)
-  - `annotation`: `annotation.gtf`
-- Outputs:
-  - `counts`: `expression.counts.tsv`
-  - `counts_summary`: `report.html` (or text artifact)
-- Params:
-  - `threads` (int, default 4)
-  - `feature_type` (string, default `exon`)
-  - `attribute` (string, default `gene_id`)
-  - `strand` (int, default 0)
-- Command template:
-  - `featureCounts -T {threads} -t {feature_type} -g {attribute} -s {strand} -a {gtf} -o {counts_tsv} {bam}`
-
-#### P6. `deseq2_diffexp`
-- Purpose: differential expression analysis
-- Container: `bioconductor/bioconductor_docker` (pinned) OR custom image with R + DESeq2
-- Inputs:
-  - `counts`: `expression.counts.tsv`
-  - `sample_sheet`: (CSV/TSV; stored as dataset artifact)
-- Outputs:
-  - `diff_table`: `expression.diff_table.tsv`
-  - `qc_plots`: `report.html` (MA plot / PCA / dispersion)
-- Params:
-  - `design_formula` (string, default `~ condition`)
-  - `contrast` (string, required, e.g., `condition,treat,ctrl`)
-  - `alpha` (float, default 0.05)
-- Command template:
-  - `Rscript /app/run_deseq2.R --counts {counts} --samples {samples} --design "{design_formula}" --contrast "{contrast}" --alpha {alpha} --out {out_dir}`
-
-#### P7 (optional). `multiqc`
-- Purpose: aggregate QC across steps
-- Container: `quay.io/biocontainers/multiqc` (pinned)
-- Inputs:
-  - `qc_inputs`: list of artifacts from FastQC/Cutadapt/STAR/featureCounts
-- Outputs:
-  - `multiqc_report`: `qc.multiqc.html`
-- Params:
-  - `title` (string, default `RNA-seq QC`)
-- Command template:
-  - `multiqc {in_dir} -o {out_dir} --title "{title}"`
-
-### Minimal RNA-seq Workflow DAG (example)
-
-Nodes:
-- `n1_fastqc_raw` (fastqc)
-- `n2_cutadapt` (cutadapt)
-- `n3_fastqc_trimmed` (fastqc)
-- `n4_align` (star_align OR hisat2_align)
-- `n5_sort_index` (samtools_sort_index)
-- `n6_featurecounts` (featurecounts)
-- `n7_deseq2` (deseq2_diffexp)
-- `n8_multiqc` (multiqc, optional)
-
-Edges:
-- raw reads ??fastqc_raw
-- raw reads ??cutadapt ??fastqc_trimmed
-- cutadapt ??align ??sort_index ??featurecounts ??deseq2
-- (optional) qc artifacts ??multiqc
-
-Acceptance (RNA-seq v0):
-- DAG validates (acyclic + IO types compatible)
-- Runner executes all nodes in topological order
-- Each node stores: params + tool versions + input hashes + output hashes + logs
-- Final artifacts visible in UI:
-  - FastQC HTML
-  - Alignment BAM (download link)
-  - Counts TSV
-  - DE diff table TSV
-  - Report HTML
-
----
-
-## 12.3 Minimal WGS DAG (v0) ??6 tools (alternative)
-
-**Pipeline:**
-1) FastQC ??2) Cutadapt ??3) BWA-MEM ??4) samtools sort+index ??5) bcftools mpileup+call ??6) bcftools filter ??(optional) MultiQC
-
-Tools (plugins): `fastqc`, `cutadapt`, `bwa_mem`, `samtools_sort_index`, `bcftools_call`, `bcftools_filter`.
+Fixed-port examples:
+- `fastqc`
+  - inputs: `reads`
+  - outputs: `fastqc_zip`, `fastqc_html`
+- `bwa_mem`
+  - inputs: `reads`, `reference`
+  - outputs: `alignment`
+- `samtools_sort_index`
+  - inputs: `alignment`
+  - outputs: `alignment_sorted`, `alignment_index`
+- `gatk_haplotypecaller`
+  - inputs: `alignment_sorted`, `reference`
+  - outputs: `gvcf`
+- `gatk_genotypegvcfs`
+  - inputs: `gvcf`, `reference`
+  - outputs: `variants`
 
 Acceptance (WGS v0):
-- Produces `variants.vcf.gz(+tbi)` and basic QC report.
+- DAG validates and can only connect compatible ports.
+- Backend generates deterministic `Snakefile` and config files.
+- `snakemake -n` works from the generated workflow.
+- Real execution can be launched from API/UI.
+- Each node stores params, versions, input hashes, output hashes, logs, and exit status.
+- Final artifacts visible in UI:
+  - FastQC HTML
+  - Sorted/indexed BAM
+  - VCF / gVCF outputs
+  - Basic run report
+
+## 12.4 Expansion path after WGS
+
+After the WGS path is stable:
+- add RNA-seq as a second fixed workflow template,
+- add more tools by extending the tool definition catalog,
+- keep the builder constrained until at least two real pipelines execute end-to-end reliably.
+
+## 12.5 IGV Result Workspace
+
+IGV is part of the result viewer, not the scheduler.
+
+Result workspace requirements:
+- Hide most raw IGV chrome and wrap `igv.js` in a custom UI shell.
+- Place locus navigation, run selector, sample selector, and track toggles in the app shell.
+- Add a right-side evidence panel for variant, gene, and provenance details.
+- Add synchronized statistical panels below or beside the genome viewer.
+- Support future overlays such as p-values, posterior probabilities, effect sizes, gene scores, and expression/protein summaries.
+
+Acceptance (IGV redesign v0):
+- Viewer looks like an integrated product surface, not a default IGV embed.
+- Track selection and feature click update custom evidence panels.
+- Statistical summaries can sync to the currently viewed locus.
+- IGV remains optional for pipeline execution; failure in viewer code must not block workflow runs.
 
 ---
 
@@ -423,7 +522,7 @@ Acceptance (WGS v0):
 
 ## Advanced Integration
 
-- [x] Snakemake wrapper
+- [ ] Snakemake execution from generated workflow files
 - [x] Nextflow wrapper
 - [x] Distributed execution support
 - [x] Cloud storage integration
@@ -432,12 +531,14 @@ Acceptance (WGS v0):
 
 ## UI Layer
 
-- [x] Visual workflow builder
-- [x] Drag-and-drop composition
-- [x] Parameter configuration panel
-- [x] Run monitoring dashboard
+- [ ] Fixed-node Snakemake workflow builder
+- [ ] Drag-and-drop composition with fixed ports only
+- [ ] Parameter configuration panel for tool-specific params
+- [ ] Run monitoring dashboard with Snakemake job state/logs
 - [x] Reproducibility report export
 - [x] Web raw bio file upload (FASTA/GTF/FASTQ/BAM via dataset API)
+- [ ] IGV redesign with evidence dock and statistics panels
+- [ ] Statistical overlays synchronized with viewed locus
 
 ---
 
@@ -468,5 +569,3 @@ A checkbox may only be marked complete if:
 ---
 
 End of AGENTS.md
-
-

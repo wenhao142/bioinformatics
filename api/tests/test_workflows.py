@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from pathlib import Path
 
 from api.main import app
 
@@ -44,6 +45,32 @@ def valid_workflow(workflow_id: str = "wf-branch"):
     }
 
 
+def external_input_workflow(workflow_id: str = "demo__wf-inputs"):
+    return {
+        "workflow_id": workflow_id,
+        "nodes": [
+            {
+                "node_id": "align",
+                "plugin_id": "bwa_mem",
+                "input_types": {"reads": "reads.fastq.gz", "reference": "reference.genome.fasta"},
+                "output_types": {"alignment": "align.bam"},
+                "parameters": {"preset": "short"},
+            },
+            {
+                "node_id": "report",
+                "plugin_id": "variant_report",
+                "input_types": {"alignment": "align.bam"},
+                "output_types": {"report": "report.html"},
+                "parameters": {},
+            },
+        ],
+        "edges": [
+            {"from_node": "align", "from_output": "alignment", "to_node": "report", "to_input": "alignment"},
+        ],
+        "parameter_sweeps": {},
+    }
+
+
 def test_import_validate_export_and_plan_workflow():
     client = TestClient(app)
     headers = auth_header(client)
@@ -52,22 +79,28 @@ def test_import_validate_export_and_plan_workflow():
     assert create.status_code == 201
     assert create.json()["report"]["acyclic"] is True
     assert "n1" in create.json()["report"]["branching_nodes"]
+    definition_path = Path(create.json()["local_export_path"])
+    assert definition_path.exists()
 
     listed = client.get("/workflows", headers=headers)
     assert listed.status_code == 200
     assert listed.json()["workflows"][0]["workflow_id"] == "wf-a"
+    assert Path(listed.json()["workflows"][0]["local_export_path"]).exists()
 
     validate = client.post("/workflows/wf-a/validate", headers=headers)
     assert validate.status_code == 200
     assert validate.json()["report"]["topological_order"][0] == "n1"
+    assert Path(validate.json()["local_export_path"]).exists()
 
     plan = client.get("/workflows/wf-a/plan", headers=headers)
     assert plan.status_code == 200
     assert "n1" in plan.json()["branching_nodes"]
+    assert Path(plan.json()["local_export_path"]).exists()
 
     export = client.get("/workflows/wf-a/export", headers=headers)
     assert export.status_code == 200
     assert export.json()["workflow"]["workflow_id"] == "wf-a"
+    assert Path(export.json()["local_export_path"]).exists()
 
 
 def test_workflow_rejects_io_type_mismatch():
@@ -116,11 +149,81 @@ def test_workflow_distributed_execution():
     body = execute.json()
     assert body["summary"]["submitted_runs"] == 3
     assert body["summary"]["completed_runs"] == 3
+    assert body["summary"]["failed_runs"] == 0
     run_id = body["summary"]["run_id"]
+    run_record_path = Path(body["summary"]["local_record_path"])
+    assert run_record_path.exists()
+    first_result = body["results"][0]
+    assert first_result["engine"] in {"snakemake", "python-fallback"}
+    assert Path(first_result["workflow_artifacts"]["run_dir"]).exists()
+    assert Path(first_result["workflow_artifacts"]["snakefile"]).exists()
+    assert Path(first_result["workflow_artifacts"]["configfile"]).exists()
+    for output_path in first_result["outputs"]:
+        assert Path(output_path).exists()
 
     fetched = client.get(f"/workflows/runs/{run_id}", headers=headers)
     assert fetched.status_code == 200
     assert fetched.json()["summary"]["run_id"] == run_id
+    assert fetched.json()["results"][0]["workflow_artifacts"]["snakefile"].endswith("Snakefile")
+    assert Path(fetched.json()["local_record_path"]).exists()
+
+    listed = client.get("/workflows/runs", headers=headers)
+    assert listed.status_code == 200
+    assert listed.json()["runs"][0]["run_id"] == run_id
+    assert Path(listed.json()["runs"][0]["local_record_path"]).exists()
+
+
+def test_workflow_requires_validated_external_inputs(monkeypatch, tmp_path):
+    monkeypatch.setenv("USE_MINIO", "false")
+    monkeypatch.setenv("LOCAL_DATASET_DIR", str(tmp_path))
+    client = TestClient(app)
+    headers = auth_header(client)
+
+    create = client.post("/workflows/import", headers=headers, json=external_input_workflow("demo-project__wf-inputs"))
+    assert create.status_code == 201
+
+    with (Path(__file__).resolve().parents[2] / "infra" / "raw_demo.fastq").open("rb") as handle:
+        upload_reads = client.post(
+            "/datasets/upload?project_id=demo-project",
+            files={"file": ("raw_demo.fastq", handle.read())},
+            headers=headers,
+        )
+    assert upload_reads.status_code == 200
+    assert upload_reads.json()["dataset"]["validation_status"] == "validated"
+
+    blocked = client.post(
+        "/workflows/demo-project__wf-inputs/execute/distributed",
+        headers=headers,
+        json={"max_workers": 1, "limit_runs": 1},
+    )
+    assert blocked.status_code == 400
+    detail = blocked.json()["detail"]
+    assert detail["project_id"] == "demo-project"
+    assert detail["missing_inputs"] == [
+        {"node_id": "align", "port": "reference", "type_id": "reference.genome.fasta"}
+    ]
+    assert detail["validated_datasets"] == ["raw_demo.fastq"]
+
+    with (Path(__file__).resolve().parents[2] / "infra" / "sample_data" / "demo_reference.fasta").open("rb") as handle:
+        upload_reference = client.post(
+            "/datasets/upload?project_id=demo-project",
+            files={"file": ("demo_reference.fasta", handle.read())},
+            headers=headers,
+        )
+    assert upload_reference.status_code == 200
+
+    execute = client.post(
+        "/workflows/demo-project__wf-inputs/execute/distributed",
+        headers=headers,
+        json={"max_workers": 1, "limit_runs": 1},
+    )
+    assert execute.status_code == 200
+    body = execute.json()
+    assert body["summary"]["completed_runs"] == 1
+    assert body["results"][0]["external_inputs"] == {
+        "align.reads": "raw_demo.fastq",
+        "align.reference": "demo_reference.fasta",
+    }
 
 
 def test_workflow_cloud_export_import_local_fallback():
@@ -138,3 +241,4 @@ def test_workflow_cloud_export_import_local_fallback():
     imported = client.post("/workflows/cloud/import/wf-cloud", headers=headers)
     assert imported.status_code == 200
     assert imported.json()["workflow_id"] == "wf-cloud"
+    assert Path(imported.json()["local_export_path"]).exists()

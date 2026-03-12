@@ -1,7 +1,12 @@
+import os
 import sys
 from pathlib import Path
 
 import pytest
+
+os.environ.setdefault("VARIANTS_USE_DB", "false")
+os.environ.setdefault("AUTH_USE_DB", "false")
+os.environ.setdefault("WORKFLOW_USE_DB", "false")
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -13,6 +18,7 @@ def reset_in_memory_state(monkeypatch):
     # Tests rely on deterministic in-memory state across modules.
     monkeypatch.setenv("VARIANTS_USE_DB", "false")
     monkeypatch.setenv("AUTH_USE_DB", "false")
+    monkeypatch.setenv("WORKFLOW_USE_DB", "false")
 
     from api import audit, auth, causal, datasets, literature, omics, plugins, rbac, runs, variants, workflows
 

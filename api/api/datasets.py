@@ -1,4 +1,5 @@
 import hashlib
+import gzip
 import os
 import tempfile
 import time
@@ -26,6 +27,10 @@ class DatasetRecord(TypedDict):
     uploaded_by: str
     uploaded_at: float
     project_id: str | None
+    input_role: str
+    canonical_type: str | None
+    validation_status: str
+    validation_detail: str
 
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
@@ -40,6 +45,65 @@ def _compute_sha256(path: Path) -> str:
         for chunk in iter(lambda: f.read(8192), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _read_text_preview(path: Path) -> list[str]:
+    if path.suffix == ".gz":
+        with gzip.open(path, "rt", encoding="utf-8", errors="replace") as handle:
+            return [handle.readline().rstrip("\n") for _ in range(4)]
+    with path.open("rt", encoding="utf-8", errors="replace") as handle:
+        return [handle.readline().rstrip("\n") for _ in range(4)]
+
+
+def _infer_dataset_type(path: Path) -> tuple[str, str | None]:
+    name = path.name.lower()
+    if name.endswith((".fastq", ".fq", ".fastq.gz", ".fq.gz")):
+        return "reads", "reads.fastq.gz"
+    if name.endswith((".fasta", ".fa", ".fna")):
+        return "reference", "reference.genome.fasta"
+    if name.endswith((".gtf", ".gff", ".gff3")):
+        return "annotation", "annotation.gtf"
+    if name.endswith(".bam"):
+        return "alignment", "align.bam"
+    if name.endswith(".vcf.gz"):
+        return "variants", "variants.vcf.gz"
+    if name.endswith(".tsv"):
+        return "table", "expression.diff_table.tsv"
+    return "unknown", None
+
+
+def _validate_uploaded_content(path: Path, input_role: str) -> tuple[str, str]:
+    try:
+        lines = _read_text_preview(path)
+    except Exception as exc:
+        if input_role == "alignment":
+            return "validated", "Binary alignment accepted by extension."
+        return "invalid", f"Cannot inspect file content: {exc}"
+
+    if input_role == "reads":
+        if len(lines) >= 4 and lines[0].startswith("@") and lines[2].startswith("+"):
+            return "validated", "FASTQ structure looks valid."
+        return "invalid", "Expected FASTQ structure (@ header and + quality separator)."
+    if input_role == "reference":
+        if lines and lines[0].startswith(">"):
+            return "validated", "FASTA structure looks valid."
+        return "invalid", "Expected FASTA content starting with '>'."
+    if input_role == "annotation":
+        content_lines = [line for line in lines if line and not line.startswith("#")]
+        if content_lines and len(content_lines[0].split("\t")) >= 8:
+            return "validated", "Annotation table looks valid."
+        return "invalid", "Expected GTF/GFF tab-delimited annotation content."
+    if input_role == "table":
+        if any("\t" in line for line in lines if line):
+            return "validated", "Tabular text accepted."
+        return "invalid", "Expected tab-delimited table content."
+    if input_role == "variants":
+        if lines and (lines[0].startswith("##") or lines[0].startswith("#CHROM")):
+            return "validated", "VCF header detected."
+        return "invalid", "Expected VCF header content."
+    if input_role == "alignment":
+        return "validated", "Alignment accepted by extension."
+    return "invalid", "Unsupported raw file type for workflow input."
 
 
 def _get_minio_client():
@@ -87,6 +151,14 @@ def _save_file(upload: UploadFile, user_email: str, project_id: str | None) -> D
         tmp_path = Path(tmp.name)
     sha = _compute_sha256(tmp_path)
     size = tmp_path.stat().st_size
+    input_role, canonical_type = _infer_dataset_type(Path(upload.filename or ""))
+    validation_status, validation_detail = _validate_uploaded_content(tmp_path, input_role)
+    if input_role == "unknown" or canonical_type is None:
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="Unsupported raw file type for workflow input")
+    if validation_status != "validated":
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=validation_detail)
     object_name = f"{sha}/{upload.filename}"
     if use_minio:
         try:
@@ -107,6 +179,10 @@ def _save_file(upload: UploadFile, user_email: str, project_id: str | None) -> D
         "uploaded_by": user_email,
         "uploaded_at": time.time(),
         "project_id": project_id,
+        "input_role": input_role,
+        "canonical_type": canonical_type,
+        "validation_status": validation_status,
+        "validation_detail": validation_detail,
     }
     _DATASETS.append(record)
     _NEXT_ID += 1

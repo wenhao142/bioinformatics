@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { resolveApiBase } from '@/lib/api-base';
 
 const parseRegion = (region: string) => {
   const [chrPart, range] = region.split(':');
@@ -45,6 +46,89 @@ type LiteratureRecord = {
   source: string;
 };
 
+type CausalRunRecord = {
+  run_id: string;
+  project_id: string | null;
+  params: {
+    chr: string;
+    start: number;
+    end: number;
+    top_n: number;
+    ld_window_bp: number;
+  };
+  counts?: {
+    variant_scores?: number;
+    gene_scores?: number;
+  };
+};
+
+type CausalVariantScore = {
+  chr: string;
+  pos: number;
+  ref: string;
+  alt: string;
+  gene: string | null;
+  score: number;
+  ld_proxy_signal: number;
+  expr_signal: number;
+  annotation_weight: number;
+};
+
+type CausalGeneScore = {
+  gene: string;
+  score: number;
+  rank: number;
+  variant_count: number;
+  top_variant_score: number;
+  mean_top3_variant_score: number;
+  expr_signal: number;
+};
+
+type CausalResult = {
+  region: {
+    chr: string;
+    start: number;
+    end: number;
+  };
+  lead_variant?: {
+    chr: string;
+    pos: number;
+    qual: number | null;
+  };
+  variant_scores: CausalVariantScore[];
+  gene_scores: CausalGeneScore[];
+  meta?: {
+    ld_window_bp?: number;
+    variants_considered?: number;
+    genes_scored?: number;
+  };
+};
+
+type WorkflowRunSummary = {
+  run_id: string;
+  workflow_id: string;
+  created_by?: string;
+  submitted_runs: number;
+  completed_runs: number;
+  failed_runs?: number;
+  duration_ms: number;
+};
+
+type WorkflowRunDetail = {
+  summary: WorkflowRunSummary;
+  results: Array<{
+    index: number;
+    status: string;
+    engine: string;
+    workflow_artifacts?: {
+      run_dir: string;
+      snakefile: string;
+      configfile: string;
+    };
+    outputs?: string[];
+  }>;
+};
+
 type VariantWindowSnp = {
   id: string;
   chr: string;
@@ -53,11 +137,6 @@ type VariantWindowSnp = {
   alt: string;
   score: number;
   filter: string;
-};
-
-type TooltipPosition = {
-  x: number;
-  y: number;
 };
 
 const TRACK_ORDER: TrackKey[] = ['genes', 'variants'];
@@ -357,17 +436,32 @@ export default function LocusPage({ params }: { params: { region: string } }) {
   const [literatureRecords, setLiteratureRecords] = useState<LiteratureRecord[]>([]);
   const [literatureLoading, setLiteratureLoading] = useState(false);
   const [literatureError, setLiteratureError] = useState<string | null>(null);
+  const [causalRuns, setCausalRuns] = useState<CausalRunRecord[]>([]);
+  const [causalRunsLoading, setCausalRunsLoading] = useState(false);
+  const [causalRunsError, setCausalRunsError] = useState<string | null>(null);
+  const [causalRunsRefreshKey, setCausalRunsRefreshKey] = useState(0);
+  const [selectedCausalRunId, setSelectedCausalRunId] = useState('');
+  const [causalResult, setCausalResult] = useState<CausalResult | null>(null);
+  const [causalResultLoading, setCausalResultLoading] = useState(false);
+  const [causalResultError, setCausalResultError] = useState<string | null>(null);
+  const [workflowRuns, setWorkflowRuns] = useState<WorkflowRunSummary[]>([]);
+  const [workflowRunsLoading, setWorkflowRunsLoading] = useState(false);
+  const [workflowRunsError, setWorkflowRunsError] = useState<string | null>(null);
+  const [workflowRunsRefreshKey, setWorkflowRunsRefreshKey] = useState(0);
+  const [selectedWorkflowRunId, setSelectedWorkflowRunId] = useState('');
+  const [workflowRunDetail, setWorkflowRunDetail] = useState<WorkflowRunDetail | null>(null);
+  const [workflowRunDetailLoading, setWorkflowRunDetailLoading] = useState(false);
+  const [workflowRunDetailError, setWorkflowRunDetailError] = useState<string | null>(null);
   const [variantWindowOpen, setVariantWindowOpen] = useState(false);
   const [variantWindowLoading, setVariantWindowLoading] = useState(false);
   const [variantWindowError, setVariantWindowError] = useState<string | null>(null);
   const [variantWindowLabel, setVariantWindowLabel] = useState('');
   const [variantWindowSnps, setVariantWindowSnps] = useState<VariantWindowSnp[]>([]);
-  const [variantWindowPos, setVariantWindowPos] = useState<TooltipPosition>({ x: 20, y: 20 });
   const genesTrackUrl =
     process.env.NEXT_PUBLIC_GENE_TRACK_URL && process.env.NEXT_PUBLIC_GENE_TRACK_URL.trim().length > 0
       ? process.env.NEXT_PUBLIC_GENE_TRACK_URL
       : '/genes.sample.bed';
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:18000';
+  const apiUrl = useMemo(() => resolveApiBase(), []);
   const decodedRegion = useMemo(() => decodeURIComponent(params.region), [params.region]);
   const { chr, start, end } = useMemo(() => parseRegion(decodedRegion), [decodedRegion]);
   const [navLocusInput, setNavLocusInput] = useState(decodedRegion);
@@ -659,6 +753,121 @@ export default function LocusPage({ params }: { params: { region: string } }) {
     return max > 0 ? max : 1;
   }, [variantWindowSnps]);
 
+  const activeTrackCount = useMemo(() => TRACK_ORDER.filter((key) => tracks[key]).length, [tracks]);
+
+  const selectedCard = useMemo(() => evidenceCards[0] ?? null, [evidenceCards]);
+
+  const selectedFeatureLocus = useMemo(() => {
+    if (!selectedCard) {
+      return null;
+    }
+    return extractFeatureLocus(selectedCard.fields);
+  }, [selectedCard]);
+
+  const selectedRefAlt = useMemo(() => {
+    if (!selectedCard) {
+      return { ref: null as string | null, alt: null as string | null };
+    }
+    return {
+      ref: pickFieldValue(selectedCard.fields, ['ref', 'reference', 'reference allele']),
+      alt: pickFieldValue(selectedCard.fields, ['alt', 'alternate', 'alternate allele']),
+    };
+  }, [selectedCard]);
+
+  const variantSignalSummary = useMemo(() => {
+    if (variantWindowSnps.length === 0) {
+      return {
+        strongest: null as VariantWindowSnp | null,
+        meanScore: null as number | null,
+      };
+    }
+    let strongest = variantWindowSnps[0];
+    let total = 0;
+    for (const row of variantWindowSnps) {
+      total += row.score;
+      if (row.score > strongest.score) {
+        strongest = row;
+      }
+    }
+    return {
+      strongest,
+      meanScore: total / variantWindowSnps.length,
+    };
+  }, [variantWindowSnps]);
+
+  const selectedCausalRun = useMemo(
+    () => causalRuns.find((run) => run.run_id === selectedCausalRunId) ?? null,
+    [causalRuns, selectedCausalRunId]
+  );
+
+  const selectedRunVariant = useMemo(() => {
+    if (!causalResult) {
+      return null;
+    }
+    const targetLocus = selectedFeatureLocus ?? getBrowserLocus(browserRef.current);
+    const rows = causalResult.variant_scores || [];
+    if (rows.length === 0) {
+      return null;
+    }
+    if (!targetLocus) {
+      return rows[0];
+    }
+    let best: CausalVariantScore | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    const center = Math.floor((targetLocus.start + targetLocus.end) / 2);
+    for (const row of rows) {
+      if (normalizeChromosome(row.chr) !== normalizeChromosome(targetLocus.chr)) {
+        continue;
+      }
+      const distance = Math.abs(row.pos - center);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = row;
+      }
+    }
+    return best ?? rows[0];
+  }, [causalResult, selectedFeatureLocus, currentLocus]);
+
+  const selectedRunGene = useMemo(() => {
+    if (!causalResult) {
+      return null;
+    }
+    const rows = causalResult.gene_scores || [];
+    if (rows.length === 0) {
+      return null;
+    }
+    if (selectedGene) {
+      const matched = rows.find((row) => row.gene.toUpperCase() === selectedGene.toUpperCase());
+      if (matched) {
+        return matched;
+      }
+    }
+    if (selectedRunVariant?.gene) {
+      const matched = rows.find((row) => row.gene.toUpperCase() === selectedRunVariant.gene!.toUpperCase());
+      if (matched) {
+        return matched;
+      }
+    }
+    return rows[0];
+  }, [causalResult, selectedGene, selectedRunVariant]);
+
+  const visibleRange = useMemo(() => parseRegion(currentLocus || decodedRegion), [currentLocus, decodedRegion]);
+
+  const visibleCausalVariants = useMemo(() => {
+    if (!causalResult) {
+      return [];
+    }
+    const span = Math.max(1, visibleRange.end - visibleRange.start);
+    return (causalResult.variant_scores || [])
+      .filter((row) => normalizeChromosome(row.chr) === normalizeChromosome(visibleRange.chr))
+      .filter((row) => row.pos >= visibleRange.start && row.pos <= visibleRange.end)
+      .map((row) => ({
+        ...row,
+        leftPct: ((row.pos - visibleRange.start) / span) * 100,
+      }))
+      .sort((a, b) => a.pos - b.pos);
+  }, [causalResult, visibleRange]);
+
   useEffect(() => {
     if (!selectedGene) {
       setLiteratureRecords([]);
@@ -729,6 +938,223 @@ export default function LocusPage({ params }: { params: { region: string } }) {
       cancelled = true;
     };
   }, [apiToken, apiUrl, invalidateToken, selectedGene]);
+
+  useEffect(() => {
+    if (!apiToken) {
+      setCausalRuns([]);
+      setSelectedCausalRunId('');
+      setCausalResult(null);
+      setCausalRunsError(null);
+      setCausalResultError(null);
+      setCausalRunsLoading(false);
+      setCausalResultLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const loadRuns = async () => {
+      try {
+        setCausalRunsLoading(true);
+        setCausalRunsError(null);
+        const response = await fetch(`${apiUrl}/causal/runs?limit=50`, {
+          headers: {
+            Authorization: `Bearer ${apiToken}`,
+          },
+        });
+        if (cancelled) {
+          return;
+        }
+        if (response.status === 401) {
+          invalidateToken('Token expired or invalid. Please sign in again.');
+          return;
+        }
+        if (!response.ok) {
+          throw new Error(`Failed to load causal runs (${response.status})`);
+        }
+        const payload = await response.json().catch(() => ({}));
+        const rows = Array.isArray(payload?.runs) ? (payload.runs as CausalRunRecord[]) : [];
+        const filtered = rows.filter((run) => normalizeChromosome(run.params?.chr) === normalizeChromosome(chr));
+        setCausalRuns(filtered);
+        setSelectedCausalRunId((prev) => {
+          if (prev && filtered.some((run) => run.run_id === prev)) {
+            return prev;
+          }
+          return filtered[0]?.run_id || '';
+        });
+      } catch (e: any) {
+        if (!cancelled) {
+          setCausalRuns([]);
+          setSelectedCausalRunId('');
+          setCausalRunsError(e?.message || 'Failed to load causal runs');
+        }
+      } finally {
+        if (!cancelled) {
+          setCausalRunsLoading(false);
+        }
+      }
+    };
+
+    void loadRuns();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiToken, apiUrl, chr, invalidateToken, causalRunsRefreshKey]);
+
+  useEffect(() => {
+    if (!apiToken || !selectedCausalRunId) {
+      setCausalResult(null);
+      setCausalResultError(null);
+      setCausalResultLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const loadResult = async () => {
+      try {
+        setCausalResultLoading(true);
+        setCausalResultError(null);
+        const response = await fetch(`${apiUrl}/causal/runs/${encodeURIComponent(selectedCausalRunId)}/result`, {
+          headers: {
+            Authorization: `Bearer ${apiToken}`,
+          },
+        });
+        if (cancelled) {
+          return;
+        }
+        if (response.status === 401) {
+          invalidateToken('Token expired or invalid. Please sign in again.');
+          return;
+        }
+        if (!response.ok) {
+          throw new Error(`Failed to load causal result (${response.status})`);
+        }
+        const payload = await response.json().catch(() => ({}));
+        setCausalResult((payload?.result as CausalResult) || null);
+      } catch (e: any) {
+        if (!cancelled) {
+          setCausalResult(null);
+          setCausalResultError(e?.message || 'Failed to load causal result');
+        }
+      } finally {
+        if (!cancelled) {
+          setCausalResultLoading(false);
+        }
+      }
+    };
+
+    void loadResult();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiToken, apiUrl, invalidateToken, selectedCausalRunId]);
+
+  useEffect(() => {
+    if (!apiToken) {
+      setWorkflowRuns([]);
+      setSelectedWorkflowRunId('');
+      setWorkflowRunDetail(null);
+      setWorkflowRunsError(null);
+      setWorkflowRunDetailError(null);
+      setWorkflowRunsLoading(false);
+      setWorkflowRunDetailLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const loadWorkflowRuns = async () => {
+      try {
+        setWorkflowRunsLoading(true);
+        setWorkflowRunsError(null);
+        const response = await fetch(`${apiUrl}/workflows/runs`, {
+          headers: {
+            Authorization: `Bearer ${apiToken}`,
+          },
+        });
+        if (cancelled) {
+          return;
+        }
+        if (response.status === 401) {
+          invalidateToken('Token expired or invalid. Please sign in again.');
+          return;
+        }
+        if (!response.ok) {
+          throw new Error(`Failed to load workflow runs (${response.status})`);
+        }
+        const payload = await response.json().catch(() => ({}));
+        const rows = Array.isArray(payload?.runs) ? (payload.runs as WorkflowRunSummary[]) : [];
+        setWorkflowRuns(rows);
+        setSelectedWorkflowRunId((prev) => {
+          if (prev && rows.some((run) => run.run_id === prev)) {
+            return prev;
+          }
+          return rows[0]?.run_id || '';
+        });
+      } catch (e: any) {
+        if (!cancelled) {
+          setWorkflowRuns([]);
+          setSelectedWorkflowRunId('');
+          setWorkflowRunsError(e?.message || 'Failed to load workflow runs');
+        }
+      } finally {
+        if (!cancelled) {
+          setWorkflowRunsLoading(false);
+        }
+      }
+    };
+
+    void loadWorkflowRuns();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiToken, apiUrl, invalidateToken, workflowRunsRefreshKey]);
+
+  useEffect(() => {
+    if (!apiToken || !selectedWorkflowRunId) {
+      setWorkflowRunDetail(null);
+      setWorkflowRunDetailError(null);
+      setWorkflowRunDetailLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const loadWorkflowRunDetail = async () => {
+      try {
+        setWorkflowRunDetailLoading(true);
+        setWorkflowRunDetailError(null);
+        const response = await fetch(`${apiUrl}/workflows/runs/${encodeURIComponent(selectedWorkflowRunId)}`, {
+          headers: {
+            Authorization: `Bearer ${apiToken}`,
+          },
+        });
+        if (cancelled) {
+          return;
+        }
+        if (response.status === 401) {
+          invalidateToken('Token expired or invalid. Please sign in again.');
+          return;
+        }
+        if (!response.ok) {
+          throw new Error(`Failed to load workflow run (${response.status})`);
+        }
+        const payload = await response.json().catch(() => ({}));
+        setWorkflowRunDetail((payload as WorkflowRunDetail) || null);
+      } catch (e: any) {
+        if (!cancelled) {
+          setWorkflowRunDetail(null);
+          setWorkflowRunDetailError(e?.message || 'Failed to load workflow run');
+        }
+      } finally {
+        if (!cancelled) {
+          setWorkflowRunDetailLoading(false);
+        }
+      }
+    };
+
+    void loadWorkflowRunDetail();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiToken, apiUrl, invalidateToken, selectedWorkflowRunId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -919,21 +1345,6 @@ export default function LocusPage({ params }: { params: { region: string } }) {
     let lastHoverAt = 0;
     let lastWheelAt = 0;
 
-    const placeVariantWindow = (event: MouseEvent) => {
-      const tooltipWidth = Math.min(560, Math.max(340, Math.floor(window.innerWidth * 0.42)));
-      const tooltipHeight = 290;
-      const gap = 14;
-      const nextX = Math.min(
-        Math.max(10, event.clientX + gap),
-        Math.max(10, window.innerWidth - tooltipWidth - 10)
-      );
-      const nextY = Math.min(
-        Math.max(10, event.clientY + gap),
-        Math.max(10, window.innerHeight - tooltipHeight - 10)
-      );
-      setVariantWindowPos({ x: nextX, y: nextY });
-    };
-
     const onMouseMove = (event: MouseEvent) => {
       if (cancelled || browserRef.current !== browser) {
         return;
@@ -949,7 +1360,6 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         hideVariantWindow();
         return;
       }
-      placeVariantWindow(event);
       const center = Math.max(1, Math.round(hovered.hoverPos));
       const snappedCenter = Math.max(1, Math.round(center / VARIANT_WINDOW_STEP_BP) * VARIANT_WINDOW_STEP_BP);
       const key = `${hovered.featureLocus.chr}:${snappedCenter}`;
@@ -1059,330 +1469,788 @@ export default function LocusPage({ params }: { params: { region: string } }) {
 
   return (
     <main className="locus-page">
-      <h1 className="page-title">Locus Explorer</h1>
-      <p className="region-line">Region: {decodedRegion}</p>
-      <section className="auth-bar">
-        {apiToken ? (
-          <>
-            <p className="auth-ok">API token loaded. Variants track is enabled.</p>
-            <button type="button" className="auth-clear" onClick={clearToken}>
-              Clear Token
-            </button>
-          </>
-        ) : (
-          <>
-            <p className="auth-warn">Variants track needs login token.</p>
-            <input
-              className="auth-input"
-              value={authEmail}
-              onChange={(event) => setAuthEmail(event.target.value)}
-              placeholder="email"
-            />
-            <input
-              className="auth-input"
-              type="password"
-              value={authPassword}
-              onChange={(event) => setAuthPassword(event.target.value)}
-              placeholder="password"
-            />
-            <button type="button" className="auth-login" onClick={handleLogin} disabled={authLoading}>
-              {authLoading ? 'Signing In...' : 'Sign In'}
-            </button>
-            {authError ? <span className="auth-error">{authError}</span> : null}
-          </>
-        )}
-      </section>
-      <section className="toggle-bar">
-        {TRACK_ORDER.map((key) => (
-          <label key={key} className="toggle-item">
-            <input
-              type="checkbox"
-              checked={tracks[key]}
-              disabled={key === 'variants' && !apiToken}
-              onChange={(event) => {
-                const checked = event.target.checked;
-                setTracks((prev) => ({ ...prev, [key]: checked }));
-              }}
-            />
-            <span>{TRACK_NAMES[key]}</span>
-          </label>
-        ))}
-      </section>
-      <section className="viewer-toolbar">
-        <div className="viewer-nav">
-          <input
-            className="viewer-locus-input"
-            value={navLocusInput}
-            onChange={(event) => setNavLocusInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                void goToLocus();
-              }
-            }}
-            placeholder="chr:start-end"
-            disabled={viewerClosed || !viewerReady}
-          />
-          <button
-            type="button"
-            className="viewer-nav-btn"
-            onClick={() => void goToLocus()}
-            disabled={viewerClosed || !viewerReady}
-          >
-            Go
-          </button>
-          <button
-            type="button"
-            className="viewer-nav-btn"
-            onClick={() => void zoomBy(2)}
-            disabled={viewerClosed || !viewerReady}
-          >
-            Zoom Out
-          </button>
-          <button
-            type="button"
-            className="viewer-nav-btn"
-            onClick={() => void zoomBy(0.5)}
-            disabled={viewerClosed || !viewerReady}
-          >
-            Zoom In
-          </button>
-          <button
-            type="button"
-            className="viewer-nav-btn"
-            onClick={() => void goToLocus(decodedRegion)}
-            disabled={viewerClosed || !viewerReady}
-          >
-            Reset
-          </button>
+      <header className="hero-shell">
+        <div className="hero-copy">
+          <p className="hero-kicker">Genome Workspace</p>
+          <h1 className="page-title">Locus Analysis Dock</h1>
+          <p className="hero-note">
+            Custom shell around IGV with synchronized evidence and statistics panels for downstream scoring.
+          </p>
         </div>
-        <div className="viewer-toolbar-actions">
-          <button
-            type="button"
-            className="viewer-toggle"
-            onClick={() => {
-              setError(null);
-              setViewerClosed((prev) => !prev);
-              if (!viewerClosed) {
-                setViewerExpanded(false);
-              }
-            }}
-          >
-            {viewerClosed ? 'Open IGV' : 'Close IGV'}
-          </button>
-          {!viewerClosed ? (
+        <div className="hero-status">
+          <div className="status-chip">
+            <span>Focus</span>
+            <strong>{currentLocus || decodedRegion}</strong>
+          </div>
+          <div className="status-chip">
+            <span>Tracks</span>
+            <strong>
+              {activeTrackCount}/{TRACK_ORDER.length}
+            </strong>
+          </div>
+          <div className={`status-chip ${apiToken ? 'status-ok' : 'status-warn'}`}>
+            <span>Variants</span>
+            <strong>{apiToken ? 'Authorized' : 'Token Required'}</strong>
+          </div>
+        </div>
+      </header>
+
+      <section className="command-grid">
+        <div className="command-card auth-card">
+          <div className="section-head">
+            <h2>Access</h2>
+            <p>Variants and linked PubMed metadata require an API token.</p>
+          </div>
+          {apiToken ? (
+            <div className="auth-inline">
+              <p className="auth-ok">API token loaded. Variants track is enabled.</p>
+              <button type="button" className="auth-clear" onClick={clearToken}>
+                Clear Token
+              </button>
+            </div>
+          ) : (
+            <div className="auth-form">
+              <p className="auth-warn">Variants track needs login token.</p>
+              <input
+                className="auth-input"
+                value={authEmail}
+                onChange={(event) => setAuthEmail(event.target.value)}
+                placeholder="email"
+              />
+              <input
+                className="auth-input"
+                type="password"
+                value={authPassword}
+                onChange={(event) => setAuthPassword(event.target.value)}
+                placeholder="password"
+              />
+              <button type="button" className="auth-login" onClick={handleLogin} disabled={authLoading}>
+                {authLoading ? 'Signing In...' : 'Sign In'}
+              </button>
+              {authError ? <span className="auth-error">{authError}</span> : null}
+            </div>
+          )}
+        </div>
+
+        <div className="command-card">
+          <div className="section-head">
+            <h2>Navigate</h2>
+            <p>Drive the IGV frame from a controlled command bar instead of the default toolbar.</p>
+          </div>
+          <div className="viewer-nav">
+            <input
+              className="viewer-locus-input"
+              value={navLocusInput}
+              onChange={(event) => setNavLocusInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  void goToLocus();
+                }
+              }}
+              placeholder="chr:start-end"
+              disabled={viewerClosed || !viewerReady}
+            />
             <button
               type="button"
-              className="viewer-expand"
-              onClick={() => setViewerExpanded((prev) => !prev)}
+              className="viewer-nav-btn"
+              onClick={() => void goToLocus()}
+              disabled={viewerClosed || !viewerReady}
             >
-              {viewerExpanded ? 'Restore Size' : 'Expand Viewer'}
+              Go
             </button>
-          ) : null}
+            <button
+              type="button"
+              className="viewer-nav-btn"
+              onClick={() => void zoomBy(2)}
+              disabled={viewerClosed || !viewerReady}
+            >
+              Zoom Out
+            </button>
+            <button
+              type="button"
+              className="viewer-nav-btn"
+              onClick={() => void zoomBy(0.5)}
+              disabled={viewerClosed || !viewerReady}
+            >
+              Zoom In
+            </button>
+            <button
+              type="button"
+              className="viewer-nav-btn"
+              onClick={() => void goToLocus(decodedRegion)}
+              disabled={viewerClosed || !viewerReady}
+            >
+              Reset
+            </button>
+          </div>
+        </div>
+
+        <div className="command-card">
+          <div className="section-head">
+            <h2>Causal Runs</h2>
+            <p>Select a stored causal scoring run to sync gene and variant statistics with the locus view.</p>
+          </div>
+          {apiToken ? (
+            <div className="run-selector-shell">
+              <div className="run-selector-row">
+                <select
+                  className="run-select"
+                  value={selectedCausalRunId}
+                  onChange={(event) => setSelectedCausalRunId(event.target.value)}
+                >
+                  <option value="">No causal run selected</option>
+                  {causalRuns.map((run) => (
+                    <option key={run.run_id} value={run.run_id}>
+                      {run.run_id} {run.project_id ? `- ${run.project_id}` : ''} ({run.params.start}-{run.params.end})
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="viewer-nav-btn"
+                  onClick={() => setCausalRunsRefreshKey((value) => value + 1)}
+                >
+                  Refresh
+                </button>
+              </div>
+              {causalRunsLoading ? <p className="placeholder">Loading causal runs...</p> : null}
+              {causalRunsError ? <p className="literature-error">{causalRunsError}</p> : null}
+              {selectedCausalRun ? (
+                <div className="run-summary-chip">
+                  <span>Region</span>
+                  <strong>
+                    {selectedCausalRun.params.chr}:{selectedCausalRun.params.start}-{selectedCausalRun.params.end}
+                  </strong>
+                </div>
+              ) : (
+                <p className="placeholder">No causal run selected for this chromosome.</p>
+              )}
+            </div>
+          ) : (
+            <p className="placeholder">Sign in to load saved causal scoring runs.</p>
+          )}
+        </div>
+
+        <div className="command-card">
+          <div className="section-head">
+            <h2>Workflow Runs</h2>
+            <p>Attach a generated Snakemake workflow run so the result dock can show execution context and artifacts.</p>
+          </div>
+          {apiToken ? (
+            <div className="run-selector-shell">
+              <div className="run-selector-row">
+                <select
+                  className="run-select"
+                  value={selectedWorkflowRunId}
+                  onChange={(event) => setSelectedWorkflowRunId(event.target.value)}
+                >
+                  <option value="">No workflow run selected</option>
+                  {workflowRuns.map((run) => (
+                    <option key={run.run_id} value={run.run_id}>
+                      {run.run_id} - {run.workflow_id}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="viewer-nav-btn"
+                  onClick={() => setWorkflowRunsRefreshKey((value) => value + 1)}
+                >
+                  Refresh
+                </button>
+              </div>
+              {workflowRunsLoading ? <p className="placeholder">Loading workflow runs...</p> : null}
+              {workflowRunsError ? <p className="literature-error">{workflowRunsError}</p> : null}
+              {workflowRunDetail ? (
+                <div className="run-summary-chip">
+                  <span>Workflow</span>
+                  <strong>
+                    {workflowRunDetail.summary.workflow_id} · {workflowRunDetail.summary.completed_runs}/
+                    {workflowRunDetail.summary.submitted_runs} completed
+                  </strong>
+                </div>
+              ) : (
+                <p className="placeholder">No workflow run attached.</p>
+              )}
+            </div>
+          ) : (
+            <p className="placeholder">Sign in to load generated workflow runs.</p>
+          )}
         </div>
       </section>
+
       {error ? (
         <div className="error">{error}</div>
       ) : (
-        <section className={`viewer-grid ${viewerExpanded ? 'viewer-grid-expanded' : ''}`}>
+        <section className={`workspace-shell ${viewerExpanded ? 'viewer-grid-expanded' : ''}`}>
           {viewerExpanded ? (
             <button type="button" className="viewer-overlay-close" onClick={() => setViewerExpanded(false)}>
               Exit Fullscreen
             </button>
           ) : null}
-          {viewerClosed ? (
-            <div className="viewer viewer-closed">
-              <p>IGV viewer is closed.</p>
-              <button type="button" className="viewer-reopen" onClick={() => setViewerClosed(false)}>
-                Reopen IGV
-              </button>
-            </div>
-          ) : (
-            <div ref={containerRef} className="viewer" />
-          )}
-          <aside className="evidence">
-            <div className="evidence-head">
-              <div>
-                <h2>Feature Detail</h2>
-                <p className="evidence-focus">Focus: {currentLocus || decodedRegion}</p>
+          <div className="viewer-column">
+            <section className="track-ribbon">
+              <div className="section-head">
+                <h2>Tracks</h2>
+                <p>Toggle genome layers and keep the shell synchronized with feature selection.</p>
               </div>
-              {evidenceCards.length > 0 ? (
-                <button type="button" className="evidence-clear" onClick={() => setEvidenceCards([])}>
-                  Clear Selection
-                </button>
-              ) : null}
-            </div>
-            {evidenceCards.length === 0 ? (
-              <p className="placeholder">
-                Hover on a gene/variant in IGV to see quick info, then click to pin REF/ALT and locus details here.
-              </p>
-            ) : (
-              <div className="evidence-list">
-                {evidenceCards.map((card) => (
-                  <article key={card.id} className="evidence-card">
-                    <div className="evidence-meta">
-                      <div className={`evidence-pill ${card.sourceKind === 'source' ? 'pill-source' : 'pill-infer'}`}>
-                        {card.sourceLabel}
-                      </div>
-                      <p>
-                        <strong>Track:</strong> {card.trackName}
-                      </p>
-                      <p>
-                        <strong>Type:</strong> {card.sourceKind}
-                      </p>
-                      <p>
-                        <strong>Source:</strong> {card.source}
-                      </p>
-                      <p>
-                        <strong>Captured:</strong> {new Date(card.createdAt).toLocaleString()}
-                      </p>
-                      {card.zoomLocus ? (
-                        <p>
-                          <strong>Zoom:</strong> {card.zoomLocus}
-                        </p>
-                      ) : null}
-                      <p>{card.note}</p>
-                    </div>
-                    <div className="evidence-fields">
-                      {card.fields.length === 0 ? (
-                        <p className="placeholder">No popup fields returned for this click.</p>
-                      ) : (
-                        card.fields.map((field, index) => (
-                          <div key={`${card.id}-${field.name}-${index}`} className="field-row">
-                            <span className="field-name">{field.name}</span>
-                            <span className="field-value">{field.value}</span>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </article>
+              <div className="toggle-bar">
+                {TRACK_ORDER.map((key) => (
+                  <label key={key} className="toggle-item">
+                    <input
+                      type="checkbox"
+                      checked={tracks[key]}
+                      disabled={key === 'variants' && !apiToken}
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+                        setTracks((prev) => ({ ...prev, [key]: checked }));
+                      }}
+                    />
+                    <span>{TRACK_NAMES[key]}</span>
+                  </label>
                 ))}
-                <section className="literature-card">
-                  <h3>PubMed</h3>
-                  <p className="literature-subtitle">
-                    Gene: <strong>{selectedGene ?? 'N/A'}</strong>
+              </div>
+              <div className="viewer-toolbar-actions">
+                <button
+                  type="button"
+                  className="viewer-toggle"
+                  onClick={() => {
+                    setError(null);
+                    setViewerClosed((prev) => !prev);
+                    if (!viewerClosed) {
+                      setViewerExpanded(false);
+                    }
+                  }}
+                >
+                  {viewerClosed ? 'Open IGV' : 'Close IGV'}
+                </button>
+                {!viewerClosed ? (
+                  <button
+                    type="button"
+                    className="viewer-expand"
+                    onClick={() => setViewerExpanded((prev) => !prev)}
+                  >
+                    {viewerExpanded ? 'Restore Size' : 'Expand Viewer'}
+                  </button>
+                ) : null}
+              </div>
+            </section>
+
+            <section className="overlay-rail-card">
+              <div className="section-head">
+                <h2>Causal Rail</h2>
+                <p>
+                  Overlaying {visibleCausalVariants.length} scored variants in {visibleRange.chr}:{visibleRange.start}-{visibleRange.end}
+                </p>
+              </div>
+              {causalResultLoading ? (
+                <p className="placeholder">Loading causal overlay...</p>
+              ) : !causalResult ? (
+                <p className="placeholder">Select a causal run to project score markers onto the active locus window.</p>
+              ) : visibleCausalVariants.length === 0 ? (
+                <p className="placeholder">No causal variants fall inside the current IGV window.</p>
+              ) : (
+                <div className="overlay-rail">
+                  {visibleCausalVariants.map((row) => (
+                    <button
+                      key={`overlay-${row.chr}-${row.pos}-${row.alt}`}
+                      type="button"
+                      className={`overlay-marker ${selectedRunVariant?.pos === row.pos ? 'overlay-marker-active' : ''}`}
+                      style={{
+                        left: `${Math.max(0, Math.min(100, row.leftPct))}%`,
+                        height: `${Math.max(18, Math.round(row.score * 72))}px`,
+                      }}
+                      title={`${row.chr}:${row.pos} score ${row.score.toFixed(3)}`}
+                      onClick={() => void goToLocus(`${row.chr}:${Math.max(1, row.pos - 120)}-${row.pos + 120}`)}
+                    >
+                      <span>{row.pos}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {viewerClosed ? (
+              <div className="viewer viewer-closed">
+                <p>IGV viewer is closed.</p>
+                <button type="button" className="viewer-reopen" onClick={() => setViewerClosed(false)}>
+                  Reopen IGV
+                </button>
+              </div>
+            ) : (
+              <div ref={containerRef} className="viewer" />
+            )}
+
+            <section className="stats-shell">
+              <div className="metric-grid">
+                <article className="metric-card">
+                  <span>Selected Gene</span>
+                  <strong>{selectedGene ?? 'N/A'}</strong>
+                </article>
+                <article className="metric-card">
+                  <span>Feature Locus</span>
+                  <strong>
+                    {selectedFeatureLocus
+                      ? `${selectedFeatureLocus.chr}:${selectedFeatureLocus.start}-${selectedFeatureLocus.end}`
+                      : currentLocus || decodedRegion}
+                  </strong>
+                </article>
+                <article className="metric-card">
+                  <span>Hover Window SNPs</span>
+                  <strong>{variantWindowSnps.length}</strong>
+                </article>
+                <article className="metric-card">
+                  <span>Top Score</span>
+                  <strong>{variantSignalSummary.strongest ? variantSignalSummary.strongest.score.toFixed(1) : 'N/A'}</strong>
+                </article>
+                <article className="metric-card">
+                  <span>Mean Score</span>
+                  <strong>{variantSignalSummary.meanScore !== null ? variantSignalSummary.meanScore.toFixed(1) : 'N/A'}</strong>
+                </article>
+                <article className="metric-card">
+                  <span>Causal Gene Score</span>
+                  <strong>{selectedRunGene ? selectedRunGene.score.toFixed(3) : 'N/A'}</strong>
+                </article>
+                <article className="metric-card">
+                  <span>Causal Variant Score</span>
+                  <strong>{selectedRunVariant ? selectedRunVariant.score.toFixed(3) : 'N/A'}</strong>
+                </article>
+              </div>
+              <div className="signal-board">
+                <div className="signal-board-head">
+                  <div>
+                    <h2>Signal Strip</h2>
+                    <p>{variantWindowOpen ? variantWindowLabel : 'Move across a gene track to stream local variant statistics.'}</p>
+                  </div>
+                  {variantSignalSummary.strongest ? (
+                    <div className="signal-highlight">
+                      Peak {variantSignalSummary.strongest.chr}:{variantSignalSummary.strongest.pos}
+                    </div>
+                  ) : null}
+                </div>
+                {variantWindowLoading ? (
+                  <p className="placeholder">Loading SNP scores...</p>
+                ) : variantWindowError ? (
+                  <p className="variant-window-error">{variantWindowError}</p>
+                ) : variantWindowSnps.length === 0 ? (
+                  <p className="placeholder">
+                    No synchronized variant statistics yet. Hover a gene track or sign in to activate the variants stream.
                   </p>
-                  {literatureLoading ? (
-                    <p className="placeholder">Loading PubMed metadata...</p>
-                  ) : literatureError ? (
-                    <p className="literature-error">{literatureError}</p>
-                  ) : literatureRecords.length === 0 ? (
-                    <p className="placeholder">No linked PubMed records.</p>
-                  ) : (
-                    <div className="literature-list">
-                      {literatureRecords.map((record) => (
-                        <article key={`${record.gene}-${record.pmid}`} className="literature-item">
-                          <a
-                            href={`https://pubmed.ncbi.nlm.nih.gov/${record.pmid}/`}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            PMID {record.pmid}
-                          </a>
-                          <p>{record.title}</p>
-                          <span>{record.year ?? 'Year unknown'}</span>
-                        </article>
+                ) : (
+                  <div className="variant-window-scroll integrated-scroll">
+                    <div className="snp-chart-strip">
+                      {variantWindowSnps.map((snp) => (
+                        <div key={`bar-${snp.id}`} className="snp-bar-item" title={`${snp.chr}:${snp.pos}`}>
+                          <span>{snp.pos}</span>
+                          <div
+                            className={`snp-bar ${variantSignalSummary.strongest?.id === snp.id ? 'snp-bar-peak' : ''}`}
+                            style={{ height: `${Math.max(10, Math.round((snp.score / variantScoreMax) * 160))}px` }}
+                          />
+                          <span>{snp.score.toFixed(1)}</span>
+                        </div>
                       ))}
                     </div>
-                  )}
-                </section>
+                  </div>
+                )}
               </div>
-            )}
+            </section>
+          </div>
+
+          <aside className="analysis-dock">
+            <section className="dock-card">
+              <div className="evidence-head">
+                <div>
+                  <h2>Snapshot</h2>
+                  <p className="evidence-focus">Focus: {currentLocus || decodedRegion}</p>
+                </div>
+                {evidenceCards.length > 0 ? (
+                  <button type="button" className="evidence-clear" onClick={() => setEvidenceCards([])}>
+                    Clear Selection
+                  </button>
+                ) : null}
+              </div>
+              <div className="snapshot-grid">
+                <div className="snapshot-cell">
+                  <span>Track</span>
+                  <strong>{selectedCard?.trackName ?? 'N/A'}</strong>
+                </div>
+                <div className="snapshot-cell">
+                  <span>Source</span>
+                  <strong>{selectedCard?.sourceLabel ?? 'Pending'}</strong>
+                </div>
+                <div className="snapshot-cell">
+                  <span>REF / ALT</span>
+                  <strong>{selectedRefAlt.ref && selectedRefAlt.alt ? `${selectedRefAlt.ref} -> ${selectedRefAlt.alt}` : 'N/A'}</strong>
+                </div>
+                <div className="snapshot-cell">
+                  <span>Literature</span>
+                  <strong>{literatureRecords.length}</strong>
+                </div>
+              </div>
+            </section>
+
+            <section className="dock-card dock-scroll">
+              <div className="section-head">
+                <h2>Feature Detail</h2>
+                <p>Click a track feature to pin genomic fields, provenance, and zoom target.</p>
+              </div>
+              {evidenceCards.length === 0 ? (
+                <p className="placeholder">
+                  Hover on a gene or variant in IGV to preview signal, then click to pin details into the dock.
+                </p>
+              ) : (
+                <div className="evidence-list">
+                  {evidenceCards.map((card) => (
+                    <article key={card.id} className="evidence-card">
+                      <div className="evidence-meta">
+                        <div className={`evidence-pill ${card.sourceKind === 'source' ? 'pill-source' : 'pill-infer'}`}>
+                          {card.sourceLabel}
+                        </div>
+                        <p>
+                          <strong>Track:</strong> {card.trackName}
+                        </p>
+                        <p>
+                          <strong>Type:</strong> {card.sourceKind}
+                        </p>
+                        <p>
+                          <strong>Source:</strong> {card.source}
+                        </p>
+                        <p>
+                          <strong>Captured:</strong> {new Date(card.createdAt).toLocaleString()}
+                        </p>
+                        {card.zoomLocus ? (
+                          <p>
+                            <strong>Zoom:</strong> {card.zoomLocus}
+                          </p>
+                        ) : null}
+                        <p>{card.note}</p>
+                      </div>
+                      <div className="evidence-fields">
+                        {card.fields.length === 0 ? (
+                          <p className="placeholder">No popup fields returned for this click.</p>
+                        ) : (
+                          card.fields.map((field, index) => (
+                            <div key={`${card.id}-${field.name}-${index}`} className="field-row">
+                              <span className="field-name">{field.name}</span>
+                              <span className="field-value">{field.value}</span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="dock-card">
+              <div className="section-head">
+                <h2>Causal Overlay</h2>
+                <p>Run-linked scores synchronized with the active locus and selected feature.</p>
+              </div>
+              {causalResultLoading ? (
+                <p className="placeholder">Loading causal run result...</p>
+              ) : causalResultError ? (
+                <p className="literature-error">{causalResultError}</p>
+              ) : !causalResult ? (
+                <p className="placeholder">No causal run loaded. Use the run selector above to attach a scoring result.</p>
+              ) : (
+                <div className="overlay-stack">
+                  <div className="overlay-grid">
+                    <div className="snapshot-cell">
+                      <span>Run</span>
+                      <strong>{selectedCausalRunId}</strong>
+                    </div>
+                    <div className="snapshot-cell">
+                      <span>Region</span>
+                      <strong>
+                        {causalResult.region.chr}:{causalResult.region.start}-{causalResult.region.end}
+                      </strong>
+                    </div>
+                    <div className="snapshot-cell">
+                      <span>Gene Rank</span>
+                      <strong>{selectedRunGene ? `#${selectedRunGene.rank}` : 'N/A'}</strong>
+                    </div>
+                    <div className="snapshot-cell">
+                      <span>Lead Variant</span>
+                      <strong>
+                        {causalResult.lead_variant
+                          ? `${causalResult.lead_variant.chr}:${causalResult.lead_variant.pos}`
+                          : 'N/A'}
+                      </strong>
+                    </div>
+                  </div>
+                  <div className="overlay-grid overlay-grid-single">
+                    <div className="snapshot-cell">
+                      <span>Focused Gene</span>
+                      <strong>
+                        {selectedRunGene
+                          ? `${selectedRunGene.gene} (${selectedRunGene.score.toFixed(3)})`
+                          : 'No matching gene score'}
+                      </strong>
+                    </div>
+                    <div className="snapshot-cell">
+                      <span>Focused Variant</span>
+                      <strong>
+                        {selectedRunVariant
+                          ? `${selectedRunVariant.chr}:${selectedRunVariant.pos} (${selectedRunVariant.score.toFixed(3)})`
+                          : 'No matching variant score'}
+                      </strong>
+                    </div>
+                  </div>
+                  <div className="overlay-rank-list">
+                    {(causalResult.gene_scores || []).slice(0, 5).map((row) => (
+                      <div key={`gene-score-${row.gene}`} className="overlay-rank-item">
+                        <span>#{row.rank}</span>
+                        <strong>{row.gene}</strong>
+                        <em>{row.score.toFixed(3)}</em>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
+
+            <section className="dock-card">
+              <div className="section-head">
+                <h2>Workflow Context</h2>
+                <p>Execution summary and generated artifacts from the attached Snakemake workflow run.</p>
+              </div>
+              {workflowRunDetailLoading ? (
+                <p className="placeholder">Loading workflow run detail...</p>
+              ) : workflowRunDetailError ? (
+                <p className="literature-error">{workflowRunDetailError}</p>
+              ) : !workflowRunDetail ? (
+                <p className="placeholder">No workflow run selected.</p>
+              ) : (
+                <div className="overlay-stack">
+                  <div className="overlay-grid">
+                    <div className="snapshot-cell">
+                      <span>Workflow ID</span>
+                      <strong>{workflowRunDetail.summary.workflow_id}</strong>
+                    </div>
+                    <div className="snapshot-cell">
+                      <span>Run ID</span>
+                      <strong>{workflowRunDetail.summary.run_id}</strong>
+                    </div>
+                    <div className="snapshot-cell">
+                      <span>Completed</span>
+                      <strong>
+                        {workflowRunDetail.summary.completed_runs}/{workflowRunDetail.summary.submitted_runs}
+                      </strong>
+                    </div>
+                    <div className="snapshot-cell">
+                      <span>Duration</span>
+                      <strong>{workflowRunDetail.summary.duration_ms} ms</strong>
+                    </div>
+                  </div>
+                  <div className="overlay-rank-list">
+                    {workflowRunDetail.results.slice(0, 3).map((row) => (
+                      <div key={`wf-result-${row.index}`} className="overlay-rank-item">
+                        <span>Task {row.index}</span>
+                        <strong>{row.engine}</strong>
+                        <em>{row.status}</em>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
+
+            <section className="dock-card">
+              <div className="section-head">
+                <h2>PubMed</h2>
+                <p>
+                  Gene: <strong>{selectedGene ?? 'N/A'}</strong>
+                </p>
+              </div>
+              {literatureLoading ? (
+                <p className="placeholder">Loading PubMed metadata...</p>
+              ) : literatureError ? (
+                <p className="literature-error">{literatureError}</p>
+              ) : literatureRecords.length === 0 ? (
+                <p className="placeholder">No linked PubMed records.</p>
+              ) : (
+                <div className="literature-list">
+                  {literatureRecords.map((record) => (
+                    <article key={`${record.gene}-${record.pmid}`} className="literature-item">
+                      <a href={`https://pubmed.ncbi.nlm.nih.gov/${record.pmid}/`} target="_blank" rel="noreferrer">
+                        PMID {record.pmid}
+                      </a>
+                      <p>{record.title}</p>
+                      <span>{record.year ?? 'Year unknown'}</span>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
           </aside>
         </section>
       )}
-      {variantWindowOpen ? (
-        <section
-          className="variant-window"
-          style={{ left: `${variantWindowPos.x}px`, top: `${variantWindowPos.y}px` }}
-          aria-live="polite"
-        >
-          <div className="variant-window-head">
-            <div>
-              <h3>SNP Score</h3>
-              <p>{variantWindowLabel}</p>
-            </div>
-          </div>
-          {variantWindowLoading ? (
-            <p className="placeholder">Loading SNP scores...</p>
-          ) : variantWindowError ? (
-            <p className="variant-window-error">{variantWindowError}</p>
-          ) : (
-            <div className="variant-window-scroll">
-              <div className="snp-chart-strip">
-                {variantWindowSnps.map((snp) => (
-                  <div key={`bar-${snp.id}`} className="snp-bar-item" title={`${snp.chr}:${snp.pos}`}>
-                    <span>{snp.pos}</span>
-                    <div
-                      className="snp-bar"
-                      style={{ height: `${Math.max(10, Math.round((snp.score / variantScoreMax) * 140))}px` }}
-                    />
-                    <span>{snp.score.toFixed(1)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </section>
-      ) : null}
       <style jsx>{`
         .locus-page {
-          --paper: #f4f6f8;
+          --paper: #edf3ef;
           --paper-soft: #ffffff;
           --ink: #0f172a;
           --ink-muted: #475569;
           --panel: #ffffff;
           --line: #d2dae4;
-          --accent: #0f6cbd;
-          --accent-soft: #6ea8dc;
+          --accent: #0f766e;
+          --accent-soft: #7dc7c1;
           --deep: #1e293b;
           min-height: 100vh;
-          padding: 28px;
+          padding: 26px;
           font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif;
-          font-size: 14pt;
           line-height: 1.35;
           color: var(--ink);
-          background: #f4f6f8;
+          background:
+            radial-gradient(circle at top left, rgba(15, 118, 110, 0.12), transparent 24%),
+            radial-gradient(circle at top right, rgba(194, 120, 39, 0.12), transparent 20%),
+            #edf3ef;
           animation: pageIn 360ms ease-out;
           overflow-x: hidden;
         }
-        .locus-page :is(p, span, label, input, button, a, h1, h2, h3) {
-          font-size: 14pt !important;
+        .hero-shell,
+        .command-grid,
+        .workspace-shell {
+          position: relative;
+          z-index: 1;
+        }
+        .hero-shell {
+          display: grid;
+          grid-template-columns: minmax(0, 1.6fr) minmax(280px, 0.8fr);
+          gap: 16px;
+          margin-bottom: 16px;
+          padding: 20px;
+          border: 1px solid var(--line);
+          border-radius: 20px;
+          background: linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(242, 247, 245, 0.98));
+        }
+        .hero-kicker {
+          margin: 0 0 8px;
+          font-size: 11px;
+          letter-spacing: 0.2em;
+          text-transform: uppercase;
+          font-weight: 800;
+          color: var(--accent);
         }
         .page-title {
-          margin: 0 0 4px;
-          font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif;
-          font-size: clamp(30px, 3.6vw, 44px);
-          line-height: 1.15;
-          letter-spacing: 0.01em;
-          color: #0f172a;
+          margin: 0;
+          font-family: 'Space Grotesk', 'IBM Plex Sans', 'Segoe UI', sans-serif;
+          font-size: clamp(30px, 4vw, 52px);
+          line-height: 1.02;
+          letter-spacing: -0.03em;
         }
-        .region-line {
-          margin: 0 0 18px;
-          display: inline-block;
-          padding: 12px 18px;
-          border: 1px solid var(--line);
-          border-radius: 10px;
-          font-weight: 700;
+        .hero-note {
+          margin: 10px 0 0;
+          max-width: 720px;
           color: var(--ink-muted);
-          background: #ffffff;
+          font-size: 14px;
         }
-        .toggle-bar {
-          display: flex;
+        .hero-status {
+          display: grid;
           gap: 10px;
-          flex-wrap: wrap;
+          align-content: start;
+        }
+        .status-chip {
+          display: grid;
+          gap: 2px;
+          padding: 12px 14px;
+          border-radius: 14px;
+          border: 1px solid #d7e2de;
+          background: rgba(255, 255, 255, 0.88);
+        }
+        .status-chip span {
+          font-size: 11px;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          color: #5a6c74;
+          font-weight: 700;
+        }
+        .status-chip strong {
+          font-size: 14px;
+          color: #12212a;
+        }
+        .status-ok {
+          border-color: #87bca9;
+          background: #effaf5;
+        }
+        .status-warn {
+          border-color: #dfb294;
+          background: #fff4eb;
+        }
+        .command-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+          gap: 14px;
           margin-bottom: 16px;
-          padding: 14px;
-          border: 1px solid var(--line);
-          border-radius: 12px;
-          background: #ffffff;
         }
-        .viewer-toolbar {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
+        .command-card,
+        .track-ribbon,
+        .stats-shell,
+        .dock-card {
+          padding: 16px;
+          border: 1px solid var(--line);
+          border-radius: 18px;
+          background: rgba(255, 255, 255, 0.95);
+        }
+        .section-head h2 {
+          margin: 0;
+          font-size: 22px;
+          color: var(--deep);
+        }
+        .section-head p {
+          margin: 4px 0 0;
+          font-size: 13px;
+          color: var(--ink-muted);
+        }
+        .auth-card {
+          display: grid;
+          gap: 12px;
+        }
+        .run-selector-shell {
+          display: grid;
           gap: 10px;
+        }
+        .run-selector-row {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+        }
+        .run-select {
+          min-height: 46px;
+          flex: 1;
+          border-radius: 10px;
+          border: 1px solid #cbd5e1;
+          background: #ffffff;
+          color: #0f172a;
+          padding: 8px 12px;
+        }
+        .run-summary-chip {
+          display: grid;
+          gap: 2px;
+          padding: 10px 12px;
+          border-radius: 12px;
+          border: 1px solid #d8e4de;
+          background: #f7fbf9;
+        }
+        .run-summary-chip span {
+          font-size: 11px;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          color: #62747d;
+          font-weight: 700;
+        }
+        .run-summary-chip strong {
+          font-size: 13px;
+          color: #10222c;
+          overflow-wrap: anywhere;
+        }
+        .auth-inline,
+        .auth-form {
+          display: flex;
           flex-wrap: wrap;
-          margin-bottom: 12px;
+          gap: 8px;
         }
         .viewer-nav {
           display: flex;
@@ -1419,6 +2287,7 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           display: flex;
           gap: 8px;
           align-items: center;
+          flex-wrap: wrap;
         }
         .viewer-toggle,
         .viewer-reopen,
@@ -1443,17 +2312,6 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           background: #1e293b;
           border-color: #1e293b;
           color: #ffffff;
-        }
-        .auth-bar {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          flex-wrap: wrap;
-          margin-bottom: 12px;
-          padding: 10px;
-          border: 1px solid #d2dae4;
-          border-radius: 12px;
-          background: #ffffff;
         }
         .auth-ok,
         .auth-warn {
@@ -1508,6 +2366,70 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           font-size: 12px;
           font-weight: 700;
         }
+        .workspace-shell {
+          display: grid;
+          grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.75fr);
+          gap: 18px;
+          align-items: start;
+        }
+        .viewer-column {
+          display: grid;
+          gap: 14px;
+        }
+        .overlay-rail-card {
+          padding: 16px;
+          border: 1px solid var(--line);
+          border-radius: 18px;
+          background: rgba(255, 255, 255, 0.95);
+          display: grid;
+          gap: 12px;
+        }
+        .overlay-rail {
+          position: relative;
+          height: 118px;
+          border-radius: 16px;
+          border: 1px solid #dbe5e1;
+          background:
+            linear-gradient(180deg, rgba(15, 118, 110, 0.06), rgba(15, 118, 110, 0)),
+            linear-gradient(90deg, rgba(15, 118, 110, 0.04) 1px, transparent 1px);
+          background-size: 100% 100%, 36px 100%;
+          overflow: hidden;
+        }
+        .overlay-marker {
+          position: absolute;
+          bottom: 0;
+          width: 14px;
+          margin-left: -7px;
+          border: none;
+          border-radius: 999px 999px 4px 4px;
+          background: linear-gradient(180deg, #d4833f, #0f766e);
+          cursor: pointer;
+          display: flex;
+          align-items: flex-start;
+          justify-content: center;
+          padding: 4px 0 0;
+          transition: transform 140ms ease, opacity 140ms ease;
+        }
+        .overlay-marker:hover {
+          transform: translateY(-2px);
+        }
+        .overlay-marker span {
+          writing-mode: vertical-rl;
+          transform: rotate(180deg);
+          font-size: 9px;
+          line-height: 1;
+          color: rgba(255, 255, 255, 0.9);
+          font-weight: 700;
+          letter-spacing: 0.04em;
+        }
+        .overlay-marker-active {
+          background: linear-gradient(180deg, #ff9b4b, #0b5d57);
+          box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.4);
+        }
+        .track-ribbon {
+          display: grid;
+          gap: 12px;
+        }
         .toggle-item {
           display: flex;
           align-items: center;
@@ -1543,18 +2465,11 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           border-radius: 10px;
           background: #fff1f2;
         }
-        .viewer-grid {
-          display: grid;
-          grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
-          gap: 18px;
-          align-items: start;
-          overflow-x: hidden;
-        }
         .viewer-grid-expanded {
           position: fixed;
           inset: 10px;
           z-index: 120;
-          background: rgba(244, 246, 248, 0.99);
+          background: rgba(237, 243, 239, 0.99);
           border: 1px solid #d2dae4;
           border-radius: 16px;
           padding: 12px;
@@ -1574,16 +2489,16 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           padding: 6px 12px;
           cursor: pointer;
         }
-        .viewer-grid-expanded .evidence {
+        .viewer-grid-expanded .analysis-dock {
           display: none;
         }
         .viewer-grid-expanded .viewer {
           min-height: calc(100vh - 56px);
         }
         .viewer {
-          min-height: 560px;
+          min-height: 620px;
           border: 1px solid #d2dae4;
-          border-radius: 12px;
+          border-radius: 18px;
           background: var(--panel);
           overflow: hidden;
         }
@@ -1601,22 +2516,84 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           font-weight: 700;
           letter-spacing: 0.02em;
         }
-        .evidence {
-          border: 1px solid #d2dae4;
-          border-radius: 12px;
-          background: var(--panel);
+        .stats-shell {
+          display: grid;
+          gap: 14px;
+        }
+        .metric-grid {
+          display: grid;
+          grid-template-columns: repeat(5, minmax(0, 1fr));
+          gap: 10px;
+        }
+        .metric-card {
+          display: grid;
+          gap: 6px;
+          padding: 14px;
+          border-radius: 14px;
+          background: linear-gradient(180deg, #ffffff, #f6fbf9);
+          border: 1px solid #d9e4df;
+        }
+        .metric-card span {
+          font-size: 11px;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          color: #5f7078;
+          font-weight: 700;
+        }
+        .metric-card strong {
+          font-size: 16px;
+          color: #10222c;
+          overflow-wrap: anywhere;
+        }
+        .signal-board {
+          border: 1px solid #d9e4df;
+          border-radius: 18px;
+          background: linear-gradient(180deg, #fbfffd, #f3f9f6);
           padding: 16px;
-          min-height: 560px;
+        }
+        .signal-board-head {
           display: flex;
-          flex-direction: column;
-          overflow: hidden;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          margin-bottom: 12px;
+        }
+        .signal-board-head h2 {
+          margin: 0;
+          font-size: 22px;
+          color: var(--deep);
+        }
+        .signal-board-head p {
+          margin: 4px 0 0;
+          font-size: 13px;
+          color: #64748b;
+        }
+        .signal-highlight {
+          border-radius: 999px;
+          padding: 7px 12px;
+          border: 1px solid #c8ddd7;
+          background: #ffffff;
+          color: #12564e;
+          font-size: 12px;
+          font-weight: 700;
+        }
+        .analysis-dock {
+          display: grid;
+          gap: 14px;
+          min-height: 0;
+        }
+        .dock-card {
+          display: grid;
+          gap: 12px;
+        }
+        .dock-scroll {
+          min-height: 420px;
         }
         .evidence-head {
           display: flex;
           align-items: center;
           justify-content: space-between;
           gap: 10px;
-          margin-bottom: 10px;
         }
         .evidence-clear {
           min-height: 52px;
@@ -1630,9 +2607,8 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           text-transform: uppercase;
           cursor: pointer;
         }
-        .evidence h2 {
+        .evidence-head h2 {
           margin: 0;
-          font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif;
           font-size: 22px;
           color: var(--deep);
         }
@@ -1642,6 +2618,72 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           color: #64748b;
           font-weight: 700;
           letter-spacing: 0.03em;
+        }
+        .snapshot-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+        }
+        .overlay-stack {
+          display: grid;
+          gap: 10px;
+        }
+        .overlay-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+        }
+        .overlay-grid-single {
+          grid-template-columns: 1fr;
+        }
+        .overlay-rank-list {
+          display: grid;
+          gap: 8px;
+        }
+        .overlay-rank-item {
+          display: grid;
+          grid-template-columns: auto 1fr auto;
+          gap: 10px;
+          align-items: center;
+          padding: 10px 12px;
+          border-radius: 12px;
+          border: 1px solid #dbe5e1;
+          background: #f8fcfa;
+        }
+        .overlay-rank-item span {
+          font-size: 12px;
+          color: #5f7179;
+          font-weight: 700;
+        }
+        .overlay-rank-item strong {
+          font-size: 14px;
+          color: #10222c;
+        }
+        .overlay-rank-item em {
+          font-style: normal;
+          font-size: 13px;
+          color: #0f766e;
+          font-weight: 700;
+        }
+        .snapshot-cell {
+          display: grid;
+          gap: 5px;
+          padding: 12px;
+          border-radius: 12px;
+          border: 1px solid #dbe5e1;
+          background: #f8fcfa;
+        }
+        .snapshot-cell span {
+          font-size: 11px;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          color: #6a7a81;
+          font-weight: 700;
+        }
+        .snapshot-cell strong {
+          font-size: 14px;
+          color: #10222c;
+          overflow-wrap: anywhere;
         }
         .evidence-list {
           display: flex;
@@ -1799,45 +2841,10 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           font-size: 13px;
           font-weight: 700;
         }
-        .variant-window {
-          position: fixed;
-          width: min(560px, calc(100vw - 20px));
-          max-height: 290px;
-          border: 1px solid #d2dae4;
-          border-radius: 12px;
-          background: #ffffff;
-          z-index: 2147483647;
-          display: flex;
-          flex-direction: column;
-          isolation: isolate;
-          pointer-events: none;
-        }
-        .variant-window-head {
-          display: flex;
-          align-items: center;
-          justify-content: flex-start;
-          gap: 10px;
-          padding: 10px 12px;
-          border-bottom: 1px solid #dbe2ea;
-          background: #f8fafc;
-        }
-        .variant-window-head h3 {
-          margin: 0;
-          font-size: 12pt !important;
-          font-weight: 800;
-          color: #0f172a;
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-        }
-        .variant-window-head p {
-          margin: 2px 0 0;
-          font-size: 10pt !important;
-          color: #64748b;
-        }
         .variant-window-error {
           margin: 0;
-          padding: 10px 12px;
-          font-size: 11pt !important;
+          padding: 10px 0;
+          font-size: 13px;
           color: #8f251f;
           font-weight: 700;
         }
@@ -1848,6 +2855,9 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           display: flex;
           flex-direction: row;
           align-items: flex-end;
+        }
+        .integrated-scroll {
+          padding: 6px 0 2px;
         }
         .snp-chart-strip {
           display: flex;
@@ -1867,10 +2877,10 @@ export default function LocusPage({ params }: { params: { region: string } }) {
         .snp-bar {
           width: 36px;
           border-radius: 7px 7px 3px 3px;
-          background: #0f6cbd;
+          background: linear-gradient(180deg, #c46d2e, #0f766e);
         }
-        .locus-page *:hover {
-          box-shadow: none !important;
+        .snp-bar-peak {
+          background: linear-gradient(180deg, #f18b3a, #0b5d57);
         }
         @keyframes pageIn {
           from {
@@ -1886,14 +2896,29 @@ export default function LocusPage({ params }: { params: { region: string } }) {
           .locus-page {
             padding: 18px;
           }
+          .hero-shell,
+          .command-grid,
+          .workspace-shell {
+            grid-template-columns: 1fr;
+          }
+          .metric-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+          .snapshot-grid {
+            grid-template-columns: 1fr;
+          }
+          .overlay-grid {
+            grid-template-columns: 1fr;
+          }
+          .run-selector-row {
+            flex-direction: column;
+            align-items: stretch;
+          }
           .auth-input {
             min-width: 130px;
           }
           .viewer-locus-input {
             min-width: 100%;
-          }
-          .viewer-grid {
-            grid-template-columns: 1fr;
           }
           .viewer-grid-expanded {
             inset: 0;
@@ -1901,13 +2926,8 @@ export default function LocusPage({ params }: { params: { region: string } }) {
             padding: 8px;
           }
           .viewer,
-          .evidence {
+          .dock-scroll {
             min-height: 420px;
-          }
-          .variant-window {
-            left: 8px;
-            width: auto;
-            max-height: 240px;
           }
         }
       `}</style>
